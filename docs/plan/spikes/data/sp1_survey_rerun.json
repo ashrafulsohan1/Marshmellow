@@ -1,0 +1,62 @@
+{
+  "generated": "2026-11-03T21:46:22.891650+00:00",
+  "interactable_types": [
+    "ButtonControl",
+    "CheckBoxControl",
+    "ComboBoxControl",
+    "EditControl",
+    "HyperlinkControl",
+    "ListItemControl",
+    "MenuItemControl",
+    "RadioButtonControl",
+    "SliderControl",
+    "SpinnerControl",
+    "SplitButtonControl",
+    "TabItemControl",
+    "ToggleButtonControl"
+  ],
+  "method": "new-window-only; settle-poll for UWP content",
+  "results": [
+    {
+      "name": "calculator",
+      "launch": [
+        "calc.exe"
+      ],
+      "found": true,
+      "title": "Calculator",
+      "hwnd": 198590,
+      "total_elements": 126,
+      "interactable": 53,
+      "walk_ms": 146,
+      "max_depth": 7,
+      "by_type": {
+        "WindowControl": 3,
+        "PaneControl": 2,
+        "CustomControl": 1,
+        "TextControl": 57,
+        "GroupControl": 7,
+        "ButtonControl": 50,
+        "ListControl": 1,
+        "ListItemControl": 2,
+        "ImageControl": 1,
+        "MenuBarControl": 1,
+        "MenuItemControl": 1
+      },
+      "sample_interactable": [
+        "Button:Decimal separator",
+        "Button:Nine",
+        "Button:Eight",
+        "Button:Seven",
+        "Button:Six",
+        "Button:Five",
+        "Button:Four",
+        "Button:Three",
+        "Button:Two",
+        "Button:One",
+        "Button:Zero",
+        "Button:Positive negative"
+      ],
+      "verdict": "uia_usable"
+    }
+  ]
+}

@@ -1,0 +1,242 @@
+{
+  "generated": "2026-11-03T21:43:55.941818+00:00",
+  "interactable_types": [
+    "ButtonControl",
+    "CheckBoxControl",
+    "ComboBoxControl",
+    "EditControl",
+    "HyperlinkControl",
+    "ListItemControl",
+    "MenuItemControl",
+    "RadioButtonControl",
+    "SliderControl",
+    "SpinnerControl",
+    "SplitButtonControl",
+    "TabItemControl",
+    "ToggleButtonControl"
+  ],
+  "results": [
+    {
+      "name": "notepad",
+      "launch": [
+        "notepad.exe"
+      ],
+      "found": true,
+      "title": "*Statistics and Queuing Theory - 02- - Notepad",
+      "hwnd": 526732,
+      "total_elements": 70,
+      "interactable": 25,
+      "walk_ms": 359,
+      "max_depth": 6,
+      "by_type": {
+        "WindowControl": 2,
+        "TitleBarControl": 1,
+        "ButtonControl": 19,
+        "MenuBarControl": 2,
+        "MenuItemControl": 4,
+        "PaneControl": 9,
+        "TextControl": 26,
+        "ProgressBarControl": 1,
+        "ImageControl": 1,
+        "TabControl": 1,
+        "ListControl": 1,
+        "TabItemControl": 2,
+        "DocumentControl": 1
+      },
+      "sample_interactable": [
+        "Button:Close",
+        "Button:Maximize",
+        "Button:Minimize",
+        "MenuItem:System",
+        "Button:Settings",
+        "Button:User avatar",
+        "Button:What's new",
+        "Button:Writing tools",
+        "Button:Clear formatting (Ctrl+Space)",
+        "Button:Table",
+        "Button:Link (Ctrl+K)",
+        "Button:Strikethrough (Ctrl+Shift+X)"
+      ],
+      "verdict": "uia_usable"
+    },
+    {
+      "name": "calculator",
+      "launch": [
+        "calc.exe"
+      ],
+      "found": true,
+      "title": "Calculator",
+      "hwnd": 2295442,
+      "total_elements": 8,
+      "interactable": 4,
+      "walk_ms": 34,
+      "max_depth": 3,
+      "by_type": {
+        "WindowControl": 2,
+        "PaneControl": 1,
+        "ButtonControl": 3,
+        "MenuBarControl": 1,
+        "MenuItemControl": 1
+      },
+      "sample_interactable": [
+        "Button:Close Calculator",
+        "Button:Maximize Calculator",
+        "Button:Minimize Calculator",
+        "MenuItem:System"
+      ],
+      "verdict": "sparse"
+    },
+    {
+      "name": "explorer",
+      "launch": [
+        "explorer.exe",
+        "shell:Downloads"
+      ],
+      "found": true,
+      "title": "Downloads - File Explorer",
+      "hwnd": 1180784,
+      "total_elements": 259,
+      "interactable": 161,
+      "walk_ms": 949,
+      "max_depth": 9,
+      "by_type": {
+        "WindowControl": 1,
+        "TitleBarControl": 1,
+        "ButtonControl": 37,
+        "MenuBarControl": 1,
+        "MenuItemControl": 1,
+        "PaneControl": 14,
+        "AppBarControl": 3,
+        "TextControl": 22,
+        "ImageControl": 12,
+        "GroupControl": 16,
+        "EditControl": 92,
+        "SplitButtonControl": 7,
+        "TabControl": 1,
+        "ListControl": 2,
+        "TabItemControl": 1,
+        "ListItemControl": 21,
+        "HeaderControl": 1,
+        "ScrollBarControl": 1,
+        "ThumbControl": 1,
+        "TreeControl": 1,
+        "TreeItemControl": 20,
+        "StatusBarControl": 1,
+        "RadioButtonControl": 2
+      },
+      "sample_interactable": [
+        "Button:Close",
+        "Button:Restore",
+        "Button:Minimize",
+        "MenuItem:System",
+        "Button:Details",
+        "Button:More options",
+        "Button:View",
+        "Button:Sort",
+        "Button:Delete",
+        "Button:Share",
+        "Button:Rename",
+        "Button:Paste"
+      ],
+      "verdict": "uia_usable"
+    },
+    {
+      "name": "edge",
+      "launch": [
+        "cmd",
+        "/c",
+        "start",
+        "msedge",
+        "about:blank"
+      ],
+      "found": true,
+      "title": "about:blank and 1 more page - Personal - Microsoft\u200b Edge",
+      "hwnd": 1246244,
+      "total_elements": 283,
+      "interactable": 104,
+      "walk_ms": 1590,
+      "max_depth": 11,
+      "by_type": {
+        "WindowControl": 1,
+        "PaneControl": 94,
+        "TabControl": 3,
+        "ButtonControl": 97,
+        "TabItemControl": 2,
+        "SliderControl": 1,
+        "DocumentControl": 6,
+        "EditControl": 2,
+        "TextControl": 62,
+        "GroupControl": 4,
+        "ToolBarControl": 3,
+        "HyperlinkControl": 1,
+        "SeparatorControl": 4,
+        "ListItemControl": 1,
+        "ImageControl": 2
+      },
+      "sample_interactable": [
+        "Button:Pin pane",
+        "Button:Search tabs",
+        "Button:New Tab",
+        "TabItem:Untitled",
+        "Button:Close tab",
+        "Button:Collaborator profile photo",
+        "Button:Collaborator profile photo",
+        "Button:Collaborator profile photo",
+        "Button:Collaborator profile photo",
+        "Button:Mute tab",
+        "TabItem:about:blank",
+        "Button:Close tab"
+      ],
+      "verdict": "uia_usable"
+    },
+    {
+      "name": "settings",
+      "launch": [
+        "cmd",
+        "/c",
+        "start",
+        "ms-settings:"
+      ],
+      "found": true,
+      "title": "Settings",
+      "hwnd": 395216,
+      "total_elements": 167,
+      "interactable": 49,
+      "walk_ms": 7537,
+      "max_depth": 10,
+      "by_type": {
+        "WindowControl": 4,
+        "PaneControl": 5,
+        "CustomControl": 1,
+        "GroupControl": 18,
+        "ScrollBarControl": 1,
+        "HyperlinkControl": 2,
+        "TextControl": 65,
+        "ButtonControl": 20,
+        "ComboBoxControl": 1,
+        "ListItemControl": 23,
+        "ListControl": 4,
+        "ImageControl": 18,
+        "ThumbControl": 1,
+        "EditControl": 2,
+        "MenuBarControl": 1,
+        "MenuItemControl": 1
+      },
+      "sample_interactable": [
+        "Hyperlink:Get help",
+        "Button:Browse more backgrounds, colors, and the",
+        "Button:Browse more backgrounds, colors, and the",
+        "ComboBox:Color mode",
+        "ListItem:Dark",
+        "ListItem:SystemSettings.ViewModel.SettingEntry",
+        "ListItem:SystemSettings.ViewModel.SettingEntry",
+        "ListItem:SystemSettings.ViewModel.SettingEntry",
+        "ListItem:SystemSettings.ViewModel.SettingEntry",
+        "ListItem:SystemSettings.ViewModel.SettingEntry",
+        "ListItem:SystemSettings.ViewModel.SettingEntry",
+        "Button:View all devices"
+      ],
+      "verdict": "uia_usable"
+    }
+  ]
+}

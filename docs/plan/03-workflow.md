@@ -48,9 +48,11 @@ This is what makes the parallel lanes safe.
 
 ## 4. Subagent usage & concurrency discipline (brief §8.D)
 
-> **Cap rule: `MAX_CONCURRENT_SUBAGENTS = 4` (provisional).**
-> SP6 in M0 empirically measures this environment's actual limit (batch-spawn increasing N in one message until
-> queueing/rejection appears) and **this line gets corrected to the measured number**. Until measured, never exceed 4.
+> **Cap rule: `MAX_CONCURRENT_SUBAGENTS = 4` (measured 2026-11-04, SP6).**
+> Batch of 6 foreground + 1 background agent in one message → 4 succeeded, 2 hard-rejected with
+> *user concurrency limit exceeded*; the background agent launched alongside → ceiling ∈ [4, 5].
+> Policy: hard cap 4 **including background agents**; overflow is queued, never dispatched; on seeing the
+> rejection string, serialize the overflow. Full data: [spikes/SP6-subagent-concurrency.md](spikes/SP6-subagent-concurrency.md).
 
 **Operating rules:**
 1. Fan-out in a single message, count ≤ cap. Overflow work is **queued** and dispatched as slots free — never assumed-parallel.

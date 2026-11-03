@@ -76,7 +76,7 @@ audio fixtures, UIA-assertion test harness): [02-milestones.md](docs/plan/02-mil
 ## 4. How we build it (workflow + subagent discipline)
 
 - **Contract-first, then parallel:** `core/contracts.py` + fakes land first; independent modules build against fakes; integration is sequential and owned by the main agent.
-- **Subagent cap:** provisionally **4 concurrent** subagents; **M0-SP6 empirically measures this environment's actual cap** and this number gets corrected in [03-workflow.md](docs/plan/03-workflow.md). Fan-out never exceeds the cap; overflow queues.
+- **Subagent cap:** **4 concurrent** subagents — measured 2026-11-04 (SP6: 7 concurrent requests → 4 ran, 2 rejected *user concurrency limit exceeded*; background agents count toward the cap). Fan-out never exceeds the cap; overflow queues.
 - Inline (sequential, main agent): contracts, planner design, safety design, all cross-module integration.
 - Delegated (parallelizable): spike research, module scaffolds against contracts, scenario/test authoring, docs, mascot assets.
 
