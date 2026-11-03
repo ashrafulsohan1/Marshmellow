@@ -92,7 +92,7 @@ avoid and why): [04-tooling.md](docs/plan/04-tooling.md). Project skills to auth
 Full register with options + recommendations: [05-open-questions.md](docs/plan/05-open-questions.md).
 Highest-impact, needing user input before/during M0:
 
-1. **Wake-word phrase** — "hey marshmellow" requires custom training on openWakeWord; Porcupine does arbitrary phrases but is commercial-licensed. (OQ-1)
+1. **Wake-word phrase** — resolved by SP7: self-trained openWakeWord model on "hey marshmellow" (Porcupine no longer viable — no free tier); user confirms exact phrase. (OQ-1)
 2. **Cloud provider & key for v1 default** — OpenAI-compatible default endpoint; which provider/key goes in first-party config. (OQ-2)
 3. **Mascot art pipeline** — PNG sprite sequence vs Lottie vs live vector; who authors the art. (OQ-3)
 4. **Language** — English-only v1 (recommend) or bilingual from M2. (OQ-5)

@@ -4,16 +4,16 @@
 Prior-art context: competitive scan (Nov 2026) — the full Marshmellow combination is unclaimed; every ingredient
 exists open source. This doc decides **which ingredients we adopt vs build**.
 
-## 1. Product libraries — ADOPT (pending M0-SP7 license re-verification)
+## 1. Product libraries — ADOPT (licenses verified by [SP7](spikes/SP7-adopt-or-build.md), 2026-11-04)
 
 | Component | Pick | License | Why | Fallback |
 |---|---|---|---|---|
-| STT | `faster-whisper` | MIT | CTranslate2 Whisper, int8 CPU, streaming-capable | API STT (opt-in) |
+| STT | `faster-whisper` (1.2.1) | MIT | CTranslate2 Whisper, int8 CPU, streaming-capable — SP7 CONFIRM-ADOPT | API STT (opt-in) |
 | VAD | `silero-vad` | MIT | tiny, robust, battle-tested | WebRTC VAD |
-| Wake word | `openWakeWord` | Apache-2.0 | offline, trainable phrase (OQ-1) | Porcupine (license ↓) |
-| TTS | `piper` | MIT | offline, fast, small voices | edge-tts (opt-in, ↓) |
-| UIA access | `uiautomation` + `pywinauto` | verify in SP7 (≈MIT/BSD-3) | tree walking + patterns; pywinauto for dialogs/depth | COM interop via ctypes |
-| Input synthesis | `pyautogui` or raw SendInput (ctypes) | BSD-3 / stdlib | keyboard/mouse fallback layer | SendInput only |
+| Wake word | `openWakeWord` (0.6.0) | **Apache-2.0 code; bundled pretrained models CC BY-NC-SA 4.0 → ship only self-trained models** (SP7) | offline; "hey marshmellow" trainable in <1 h via synthetic-data pipeline (SP7) | hotkey-only mode (D2 setting) — Porcupine has no free tier since 2026-06-30 (SP7) |
+| TTS | `piper` (piper1-gpl ≥1.8.0) | **GPL-3.0-or-later** since 1.3/1.8 (last MIT: 1.2.0) → run as an isolated **subprocess**, never an in-process import (SP7) | offline, fast; voice `en_US-lessac-medium` from rhasspy/piper-voices | edge-tts, opt-in only, pin ≥7.3.1 (SP7) |
+| UIA access | `uiautomation` (2.0.29) + `pywinauto` (pin 0.6.9 stable) | **Apache-2.0** / BSD-3-Clause (SP7) | tree walking + patterns; pywinauto for dialogs/depth (1.0.0b1 revived Oct 2026 — evaluate in M3) | COM interop via ctypes |
+| Input synthesis | **raw SendInput (ctypes)** | stdlib | primary path — `pyautogui` is stale (last release May 2023, SP7) | pyautogui only if a helper is needed |
 | Screenshots | `mss` | MIT | fast multi-monitor capture | PIL.ImageGrab |
 | GUI/tray/mascot | `PySide6` | LGPL-3.0 (dynamic link OK) | tray, frameless overlay, widgets, animations | — |
 | Async core | `asyncio` + `pydantic` | stdlib / MIT | EventBus, contracts | — |
@@ -23,11 +23,11 @@ exists open source. This doc decides **which ingredients we adopt vs build**.
 
 ## 2. EVALUATE (patterns or opt-in, decide in SP7/M2)
 
-- **Pipecat** (BSD-2) — voice-pipeline patterns (transport/VAD/echo handling). Likely *pattern adoption only*; pulling the framework would fight our single-process asyncio design.
-- **Agent S / Agent-S2** (research) — GUI-agent loop + perception prompting patterns; we adopt *ideas* (SoM, verification loop), not code (research license, AC by default).
-- **OS-World** — scenario/benchmark shapes for our UI-test corpus.
-- **edge-tts** — unofficial Google endpoint: better voices but ToS/reliability risk → opt-in extra voice only, never default.
-- **Porcupine** — arbitrary custom wake phrases, but Picovoice commercial licensing → only if openWakeWord can't do "hey marshmellow".
+- **Pipecat** (BSD-2, SP7-confirmed) — voice-pipeline patterns (transport/VAD/echo handling). Likely *pattern adoption only*; pulling the framework would fight our single-process asyncio design.
+- **Agent S / Agent-S2** — GUI-agent loop + perception prompting patterns; **Apache-2.0** (SP7 — earlier "research license" assumption was wrong), so code adoption is legally fine; we still adopt *ideas* (SoM, verification loop) first.
+- **OS-World** — scenario/benchmark shapes for our UI-test corpus; **Apache-2.0** (SP7).
+- **edge-tts** — unofficial **Microsoft** endpoint; broke Oct 2026 (Sec-MS-GEC v2 token enforcement → 403s on ≤7.2.8), fixed in ≥7.3.1 but ~50% higher latency (SP7) → opt-in extra voice only, pin `edge-tts>=7.3.1`, never default.
+- **Porcupine** — **AVOID** (SP7): no free/personal tier remains; free-tier AccessKeys stopped working 2026-06-30. openWakeWord with self-trained models is the wake path.
 
 ## 3. Dev-workflow tooling (this CLI), MCP, skills, hooks
 

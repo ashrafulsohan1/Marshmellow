@@ -8,7 +8,7 @@ D3 autostart = user setting · D4 cloud-first LLM · D5 hybrid UIA+vision percep
 
 | # | Question | Options | Recommendation | Decided by |
 |---|---|---|---|---|
-| OQ-1 | Wake-word phrase & engine: "hey marshmellow" needs custom model training on openWakeWord; Porcupine takes arbitrary phrases but is commercially licensed | (a) openWakeWord custom-trained · (b) openWakeWord pretrained generic phrase ("hey jarvis"-class) · (c) Porcupine | (a) if M0-SP3 training works, else (b) with user picking the phrase | M0-SP3 + user (final phrase) |
+| OQ-1 | Wake-word phrase & engine | **Resolved by SP7**: openWakeWord self-trained model on **"hey marshmellow"** — synthetic-TTS pipeline, <1 h training + 1–2 d false-accept tuning; Porcupine is dead (no free tier since 2026-06-30); must ship **self-trained** models only (bundled openWakeWord models are CC BY-NC-SA 4.0) | engine + approach decided; model training happens during M2 prep | user: confirm the exact phrase ("hey marshmellow"?) |
 | OQ-2 | Which cloud provider + API key is the first-party default? | (a) OpenAI-compat endpoint w/ GLM/Z.AI · (b) OpenAI · (c) Anthropic | (a) — OpenAI-compatible base URL keeps it provider-agnostic; user supplies key in settings | **user** (which key) |
 | OQ-3 | Mascot art & animation pipeline | (a) PNG sprite sequence / APNG (zero deps) · (b) Lottie (small dep, slick) · (c) live-drawn vector (QPainter) | (a) for v1 + Lottie later; art source: user provides or simple commissioned/pixel style | user (style) |
 | OQ-4 | STT default size (base/small/distil) | — | whichever wins M0-SP2 on this machine | M0-SP2 |
