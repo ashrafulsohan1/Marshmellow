@@ -1,0 +1,31 @@
+{
+  "generated": "2026-11-03T21:58:16.520106+00:00",
+  "mode": "resident (load once)",
+  "rows": [
+    {
+      "text": "On it. Opening the browser now.",
+      "mode": "stream",
+      "first_audio_s": 0.21,
+      "synth_s": 0.4,
+      "audio_s": 2.36,
+      "rtf": 0.17
+    },
+    {
+      "text": "They posted a new video two days ago, titled Getting Started with Marshmellow.",
+      "mode": "stream",
+      "first_audio_s": 0.55,
+      "synth_s": 0.55,
+      "audio_s": 5.21,
+      "rtf": 0.106
+    },
+    {
+      "text": "I need the screen to confirm this purchase. Is that okay?",
+      "mode": "stream",
+      "first_audio_s": 0.34,
+      "synth_s": 0.45,
+      "audio_s": 4.37,
+      "rtf": 0.102
+    }
+  ],
+  "load_s": 7.69
+}

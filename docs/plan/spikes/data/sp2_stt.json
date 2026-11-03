@@ -1,0 +1,22 @@
+{
+  "generated": "2026-11-03T21:56:21.697887+00:00",
+  "fixtures": 12,
+  "note": "SAPI-clean speech; comparative WER only",
+  "configs": [
+    {
+      "model": "base",
+      "compute": "int8",
+      "error": "TypeError(\"open() got an unexpected keyword argument 'metadata_errors'\")"
+    },
+    {
+      "model": "small",
+      "compute": "int8",
+      "error": "TypeError(\"open() got an unexpected keyword argument 'metadata_errors'\")"
+    },
+    {
+      "model": "distil-small.en",
+      "compute": "int8",
+      "error": "TypeError(\"open() got an unexpected keyword argument 'metadata_errors'\")"
+    }
+  ]
+}
