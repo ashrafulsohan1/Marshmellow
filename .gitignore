@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Marshmellow local runtime artifacts
+*.log
+logs/
+%LOCALAPPDATA%/
+
+# Environments & secrets
+.env
+*.key
+config.local.toml
+
+# OS
+Thumbs.db
+.DS_Store
