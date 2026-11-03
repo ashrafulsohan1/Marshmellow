@@ -50,8 +50,8 @@ def main() -> None:
     if not CONF.exists():
         urllib.request.urlretrieve(VOICE_BASE + CONF.name, CONF)
 
-    piper = shutil.which("piper") or str(Path(__import__("sys").executable).replace(
-        "python.exe", "") + "piper.exe")
+    import sys
+    piper = shutil.which("piper") or str(Path(sys.executable).parent / "piper.exe")
     if not Path(piper).exists():
         # piper-tts >=1.3 exposes a python API instead of a console script
         try:

@@ -1,0 +1,36 @@
+{
+  "generated": "2026-11-03T21:54:36.078786+00:00",
+  "sr": 16000,
+  "chunk_ms": 80,
+  "seconds_per_stream": 60,
+  "models": {
+    "hey_jarvis": {
+      "silence": {
+        "chunk_ms_mean": 3.63,
+        "chunk_ms_p95": 4.9,
+        "false_accept_chunks": 0,
+        "max_score": 0.0
+      },
+      "pink_noise": {
+        "chunk_ms_mean": 5.35,
+        "chunk_ms_p95": 9.02,
+        "false_accept_chunks": 0,
+        "max_score": 0.172
+      }
+    },
+    "alexa": {
+      "silence": {
+        "chunk_ms_mean": 3.53,
+        "chunk_ms_p95": 4.69,
+        "false_accept_chunks": 0,
+        "max_score": 0.0
+      },
+      "pink_noise": {
+        "chunk_ms_mean": 4.71,
+        "chunk_ms_p95": 6.03,
+        "false_accept_chunks": 0,
+        "max_score": 0.008
+      }
+    }
+  }
+}
