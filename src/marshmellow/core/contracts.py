@@ -148,3 +148,11 @@ class SpeakRequest(BaseModel):
     text: str
     priority: Literal["ack", "result", "background"] = "result"
     interrupt: bool = False
+
+
+class SpeakingStarted(BaseModel):
+    """TTS playback began (echo guard: suppress wake detection until Stopped)."""
+
+
+class SpeakingStopped(BaseModel):
+    """TTS playback ended (one event per utterance)."""

@@ -282,3 +282,4 @@ class SpeakRequest(BaseModel): text: str; priority: Literal["ack","result","back
 ## Changelog
 - 2026-11-04: v1 draft created at planning stage (no product code yet).
 - 2026-11-04: contracts authored in M1 (`core/contracts.py`) — one deviation from the §4 sketch: `SpeechSegment.pcm` is `bytes` (mono int16 LE) instead of `np.ndarray` (keeps numpy out of the contracts layer; numpy views are created at capture). Authored file is the source of truth.
+- 2026-11-04 (M2): added `SpeakingStarted`/`SpeakingStopped` events — the echo-guard signal (wake detection suppressed while TTS plays).
