@@ -59,7 +59,8 @@ class EventBus:
 
     def stop(self) -> None:
         self._q.put(None)
-        self._worker.join(timeout=2.0)
+        if threading.current_thread() is not self._worker:
+            self._worker.join(timeout=2.0)
 
     def _drain(self) -> None:
         while True:
