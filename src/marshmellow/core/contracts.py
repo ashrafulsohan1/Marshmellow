@@ -156,3 +156,34 @@ class SpeakingStarted(BaseModel):
 
 class SpeakingStopped(BaseModel):
     """TTS playback ended (one event per utterance)."""
+
+
+class LLMMessage(BaseModel):
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str
+    tool_call_id: str | None = None
+    name: str | None = None
+
+
+class LLMToolCall(BaseModel):
+    name: str
+    arguments: dict[str, object] = Field(default_factory=dict)
+
+
+class LLMRequest(BaseModel):
+    messages: list[LLMMessage]
+    tools: list[dict[str, object]] = Field(default_factory=list)
+    max_tokens: int = 1024
+
+
+class LLMResponse(BaseModel):
+    text: str = ""
+    tool_calls: list[LLMToolCall] = Field(default_factory=list)
+    model: str = ""
+    stop_reason: str | None = None
+
+
+class ProviderCaps(BaseModel):
+    vision: bool = False
+    tool_call: bool = False
+    json_schema: bool = False

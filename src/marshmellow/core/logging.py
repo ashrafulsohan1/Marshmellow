@@ -21,6 +21,13 @@ _SECRET_RE = re.compile(
 
 _logger_name = "marshmellow"
 _configured = False
+_registered_secrets: list[str] = []
+
+
+def register_secret(value: str) -> None:
+    """Exact-string redaction for values that have no `password=` shape (API keys)."""
+    if value and value not in _registered_secrets:
+        _registered_secrets.append(value)
 
 
 class JsonFormatter(logging.Formatter):
@@ -34,7 +41,11 @@ class JsonFormatter(logging.Formatter):
         if record.exc_info:
             entry["exc"] = self.formatException(record.exc_info)
         line = json.dumps(entry, ensure_ascii=False)
-        return _SECRET_RE.sub(r"\1=[REDACTED]", line)
+        line = _SECRET_RE.sub(r"\1=[REDACTED]", line)
+        for secret in _registered_secrets:
+            if secret in line:
+                line = line.replace(secret, "[REDACTED]")
+        return line
 
 
 def setup_logging(log_dir: Path) -> logging.Logger:
@@ -58,6 +69,7 @@ def setup_logging(log_dir: Path) -> logging.Logger:
 def _reset_for_tests() -> None:
     """Test-only: drop the singleton so setup_logging reconfigures cleanly."""
     global _configured
+    _registered_secrets.clear()
     lg = logging.getLogger(_logger_name)
     for handler in list(lg.handlers):
         lg.removeHandler(handler)
