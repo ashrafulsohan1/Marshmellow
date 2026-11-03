@@ -20,6 +20,8 @@ overlay + tray are the whole visible footprint. Full vision: original project br
 | D4 | LLM default | **Cloud API first** (OpenAI-compatible endpoint; provider-agnostic) | Local (Ollama/llama.cpp) is a first-class supported adapter, not the default |
 | D5 | Perception | **Hybrid: UI Automation (UIA)-first + vision (screenshot + VLM) fallback** | Composed into one element list; vision required for UIA-blind surfaces |
 | D6 | Mode policy | Foreground-visible is the default for anything touching UI; background only for waiting/checking task classes | Background tasks needing UI must escalate via a **foreground lease** (user-consented) |
+| D7 | Cloud API keys | **BYOK** — Marshmellow ships no first-party key; the user brings their own key for any OpenAI-compatible endpoint, stored in Windows Credential Manager (config keeps only a reference) | First-run onboarding stores the key; SP5's provider probe = the first real M2 cloud call |
+| D8 | Wake phrase | **"hey marshmellow"** (user-confirmed, 2026-11-04) | openWakeWord **self-trained** model ships in M2; bundled openWakeWord models never ship (CC BY-NC-SA) |
 
 Sub-decisions delegated to M0 spikes (with numbers, not opinions): STT model/size, wake-word engine, TTS engine default,
 vision-LLM choice per provider. See [Milestones](docs/plan/02-milestones.md) and [Open Questions](docs/plan/05-open-questions.md).
@@ -90,12 +92,10 @@ avoid and why): [04-tooling.md](docs/plan/04-tooling.md). Project skills to auth
 ## 6. Open questions
 
 Full register with options + recommendations: [05-open-questions.md](docs/plan/05-open-questions.md).
-Highest-impact, needing user input before/during M0:
+Resolved 2026-11-04 with the user: wake phrase "hey marshmellow" (OQ-1), **BYOK** for cloud keys (OQ-2), STT default (OQ-4). Still user-owned:
 
-1. **Wake-word phrase** — resolved by SP7: self-trained openWakeWord model on "hey marshmellow" (Porcupine no longer viable — no free tier); user confirms exact phrase. (OQ-1)
-2. **Cloud provider & key for v1 default** — OpenAI-compatible default endpoint; which provider/key goes in first-party config. (OQ-2)
-3. **Mascot art pipeline** — PNG sprite sequence vs Lottie vs live vector; who authors the art. (OQ-3)
-4. **Language** — English-only v1 (recommend) or bilingual from M2. (OQ-5)
+1. **Mascot art pipeline** — PNG sprite sequence vs Lottie vs live vector; who authors the art. (OQ-3)
+2. **Language** — English-only v1 (recommend) or bilingual from M2. (OQ-5)
 
 ## 7. What happens next
 
