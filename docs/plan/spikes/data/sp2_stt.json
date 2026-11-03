@@ -1,22 +1,325 @@
 {
-  "generated": "2026-11-03T22:00:36.589255+00:00",
+  "generated": "2026-11-03T22:02:08.069927+00:00",
   "fixtures": 12,
   "note": "SAPI-clean speech; comparative WER only",
   "configs": [
     {
       "model": "base",
       "compute": "int8",
-      "error": "ModuleNotFoundError(\"No module named 'av'\")"
+      "load_s": 1.4,
+      "mean_rtf": 0.31,
+      "mean_wer": 0.156,
+      "p95_infer_s": 1.21,
+      "rows": [
+        {
+          "ref": "Hey Marshmellow, open the browser and check if the YouTube channel has new videos",
+          "hyp": "Hey Marshmello, open the browser and check if the YouTube channel has new videos.",
+          "dur_s": 5.49,
+          "infer_s": 1.08,
+          "rtf": 0.196,
+          "wer": 0.143
+        },
+        {
+          "ref": "Open Notepad and type hello world",
+          "hyp": "Open Notepad and Type Hello World",
+          "dur_s": 2.97,
+          "infer_s": 1.38,
+          "rtf": 0.464,
+          "wer": 0.0
+        },
+        {
+          "ref": "What is the weather forecast for tomorrow",
+          "hyp": "What is the weather forecast for tomorrow?",
+          "dur_s": 2.94,
+          "infer_s": 1.06,
+          "rtf": 0.362,
+          "wer": 0.143
+        },
+        {
+          "ref": "Turn the volume down to twenty percent",
+          "hyp": "Turn the volume down to 20%.",
+          "dur_s": 3.12,
+          "infer_s": 0.98,
+          "rtf": 0.314,
+          "wer": 0.286
+        },
+        {
+          "ref": "Open File Explorer and go to the Downloads folder",
+          "hyp": "Open file explorer and go to the downloads folder.",
+          "dur_s": 3.72,
+          "infer_s": 0.97,
+          "rtf": 0.26,
+          "wer": 0.111
+        },
+        {
+          "ref": "Search for flights to Seattle next weekend",
+          "hyp": "Search for flights to Seattle next weekend.",
+          "dur_s": 3.21,
+          "infer_s": 0.94,
+          "rtf": 0.292,
+          "wer": 0.143
+        },
+        {
+          "ref": "Play my Spotify playlist called Focus",
+          "hyp": "Play my Spotify playlist called Focus.",
+          "dur_s": 3.33,
+          "infer_s": 0.96,
+          "rtf": 0.288,
+          "wer": 0.167
+        },
+        {
+          "ref": "Take a screenshot and send it to Anna on WhatsApp",
+          "hyp": "Take a screenshot and send it to Anna on WhatsApp.",
+          "dur_s": 3.64,
+          "infer_s": 1.02,
+          "rtf": 0.28,
+          "wer": 0.1
+        },
+        {
+          "ref": "Set a reminder for nine AM on Friday",
+          "hyp": "Set a reminder for 9am on Friday.",
+          "dur_s": 3.18,
+          "infer_s": 1.01,
+          "rtf": 0.318,
+          "wer": 0.375
+        },
+        {
+          "ref": "Close all windows and put the computer to sleep",
+          "hyp": "Close all windows and put the computer to sleep.",
+          "dur_s": 3.49,
+          "infer_s": 0.98,
+          "rtf": 0.28,
+          "wer": 0.111
+        },
+        {
+          "ref": "What is the GitHub repository for this project",
+          "hyp": "What is the GitHub repository for this project?",
+          "dur_s": 3.45,
+          "infer_s": 0.97,
+          "rtf": 0.281,
+          "wer": 0.125
+        },
+        {
+          "ref": "Tell me a joke about marshmallows",
+          "hyp": "Tell me a joke about marshmallows.",
+          "dur_s": 2.73,
+          "infer_s": 1.04,
+          "rtf": 0.381,
+          "wer": 0.167
+        }
+      ]
     },
     {
       "model": "small",
       "compute": "int8",
-      "error": "ModuleNotFoundError(\"No module named 'av'\")"
+      "load_s": 2.1,
+      "mean_rtf": 1.872,
+      "mean_wer": 0.18,
+      "p95_infer_s": 14.25,
+      "rows": [
+        {
+          "ref": "Hey Marshmellow, open the browser and check if the YouTube channel has new videos",
+          "hyp": "Hey Marshmallow, open the browser and check if the YouTube channel has new videos.",
+          "dur_s": 5.49,
+          "infer_s": 3.8,
+          "rtf": 0.691,
+          "wer": 0.143
+        },
+        {
+          "ref": "Open Notepad and type hello world",
+          "hyp": "Open Notepad and type Hello World.",
+          "dur_s": 2.97,
+          "infer_s": 8.21,
+          "rtf": 2.761,
+          "wer": 0.167
+        },
+        {
+          "ref": "What is the weather forecast for tomorrow",
+          "hyp": "What is the weather forecast for tomorrow?",
+          "dur_s": 2.94,
+          "infer_s": 10.76,
+          "rtf": 3.661,
+          "wer": 0.143
+        },
+        {
+          "ref": "Turn the volume down to twenty percent",
+          "hyp": "Turn the volume down to 20%.",
+          "dur_s": 3.12,
+          "infer_s": 18.51,
+          "rtf": 5.926,
+          "wer": 0.286
+        },
+        {
+          "ref": "Open File Explorer and go to the Downloads folder",
+          "hyp": "Open file explorer and go to the downloads folder.",
+          "dur_s": 3.72,
+          "infer_s": 5.19,
+          "rtf": 1.395,
+          "wer": 0.111
+        },
+        {
+          "ref": "Search for flights to Seattle next weekend",
+          "hyp": "Search for flights to Seattle next weekend.",
+          "dur_s": 3.21,
+          "infer_s": 4.24,
+          "rtf": 1.319,
+          "wer": 0.143
+        },
+        {
+          "ref": "Play my Spotify playlist called Focus",
+          "hyp": "Play my Spotify playlist called Focus.",
+          "dur_s": 3.33,
+          "infer_s": 3.71,
+          "rtf": 1.115,
+          "wer": 0.167
+        },
+        {
+          "ref": "Take a screenshot and send it to Anna on WhatsApp",
+          "hyp": "Take a screenshot and send it to Anna on WhatsApp.",
+          "dur_s": 3.64,
+          "infer_s": 3.53,
+          "rtf": 0.968,
+          "wer": 0.1
+        },
+        {
+          "ref": "Set a reminder for nine AM on Friday",
+          "hyp": "said a reminder for 9am on Friday.",
+          "dur_s": 3.18,
+          "infer_s": 3.33,
+          "rtf": 1.046,
+          "wer": 0.5
+        },
+        {
+          "ref": "Close all windows and put the computer to sleep",
+          "hyp": "Close all windows and put the computer to sleep.",
+          "dur_s": 3.49,
+          "infer_s": 3.39,
+          "rtf": 0.972,
+          "wer": 0.111
+        },
+        {
+          "ref": "What is the GitHub repository for this project",
+          "hyp": "What is the GitHub repository for this project?",
+          "dur_s": 3.45,
+          "infer_s": 4.49,
+          "rtf": 1.299,
+          "wer": 0.125
+        },
+        {
+          "ref": "Tell me a joke about marshmallows",
+          "hyp": "Tell me a joke about marshmallows.",
+          "dur_s": 2.73,
+          "infer_s": 3.57,
+          "rtf": 1.307,
+          "wer": 0.167
+        }
+      ]
     },
     {
       "model": "distil-small.en",
       "compute": "int8",
-      "error": "ModuleNotFoundError(\"No module named 'av'\")"
+      "load_s": 2.2,
+      "mean_rtf": 0.963,
+      "mean_wer": 0.148,
+      "p95_infer_s": 3.78,
+      "rows": [
+        {
+          "ref": "Hey Marshmellow, open the browser and check if the YouTube channel has new videos",
+          "hyp": "Hey Marshmallow, open the browser and check if the YouTube channel has new videos.",
+          "dur_s": 5.49,
+          "infer_s": 2.95,
+          "rtf": 0.537,
+          "wer": 0.143
+        },
+        {
+          "ref": "Open Notepad and type hello world",
+          "hyp": "Open Notepad and type Hello World",
+          "dur_s": 2.97,
+          "infer_s": 3.17,
+          "rtf": 1.065,
+          "wer": 0.0
+        },
+        {
+          "ref": "What is the weather forecast for tomorrow",
+          "hyp": "What is the weather forecast for tomorrow?",
+          "dur_s": 2.94,
+          "infer_s": 3.64,
+          "rtf": 1.239,
+          "wer": 0.143
+        },
+        {
+          "ref": "Turn the volume down to twenty percent",
+          "hyp": "Turn the volume down to 20%",
+          "dur_s": 3.12,
+          "infer_s": 3.96,
+          "rtf": 1.269,
+          "wer": 0.286
+        },
+        {
+          "ref": "Open File Explorer and go to the Downloads folder",
+          "hyp": "Open file Explorer and go to the downloads folder.",
+          "dur_s": 3.72,
+          "infer_s": 3.53,
+          "rtf": 0.949,
+          "wer": 0.111
+        },
+        {
+          "ref": "Search for flights to Seattle next weekend",
+          "hyp": "Search for flights to Seattle next weekend.",
+          "dur_s": 3.21,
+          "infer_s": 3.31,
+          "rtf": 1.031,
+          "wer": 0.143
+        },
+        {
+          "ref": "Play my Spotify playlist called Focus",
+          "hyp": "Play my Spotify playlist called Focus.",
+          "dur_s": 3.33,
+          "infer_s": 2.99,
+          "rtf": 0.899,
+          "wer": 0.167
+        },
+        {
+          "ref": "Take a screenshot and send it to Anna on WhatsApp",
+          "hyp": "Take a screenshot and send it to Anna on WhatsApp",
+          "dur_s": 3.64,
+          "infer_s": 2.94,
+          "rtf": 0.808,
+          "wer": 0.0
+        },
+        {
+          "ref": "Set a reminder for nine AM on Friday",
+          "hyp": "Set a reminder for 9 a.m. on Friday.",
+          "dur_s": 3.18,
+          "infer_s": 3.11,
+          "rtf": 0.977,
+          "wer": 0.375
+        },
+        {
+          "ref": "Close all windows and put the computer to sleep",
+          "hyp": "Close all windows and put the computer to sleep.",
+          "dur_s": 3.49,
+          "infer_s": 3.05,
+          "rtf": 0.874,
+          "wer": 0.111
+        },
+        {
+          "ref": "What is the GitHub repository for this project",
+          "hyp": "What is the GitHub repository for this project?",
+          "dur_s": 3.45,
+          "infer_s": 2.97,
+          "rtf": 0.861,
+          "wer": 0.125
+        },
+        {
+          "ref": "Tell me a joke about marshmallows",
+          "hyp": "Tell me a joke about marshmallows.",
+          "dur_s": 2.73,
+          "infer_s": 2.87,
+          "rtf": 1.049,
+          "wer": 0.167
+        }
+      ]
     }
   ]
 }
