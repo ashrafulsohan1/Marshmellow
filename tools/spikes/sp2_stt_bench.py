@@ -59,6 +59,21 @@ def wav_duration(path: Path) -> float:
         return w.getnframes() / w.getframerate()
 
 
+def load_wav_16k(path: Path) -> np.ndarray:
+    """16-bit wav -> mono float32 @16 kHz. Feeds faster-whisper as an ndarray,
+    bypassing its PyAV file-decoding path (the deployment shape too: the
+    product always hands the model live numpy PCM, never files)."""
+    with wave.open(str(path), "rb") as w:
+        sr, ch, raw = w.getframerate(), w.getnchannels(), w.readframes(w.getnframes())
+    x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    if ch > 1:
+        x = x.reshape(-1, ch).mean(axis=1)
+    if sr != 16000:
+        idx = np.linspace(0.0, len(x) - 1.0, int(round(len(x) * 16000 / sr)))
+        x = np.interp(idx, np.arange(len(x), dtype=np.float64), x)
+    return x.astype(np.float32)
+
+
 def wer(ref: str, hyp: str) -> float:
     r, h = ref.lower().split(), hyp.lower().split()
     d = np.zeros((len(r) + 1, len(h) + 1), dtype=int)
@@ -89,7 +104,7 @@ def bench(model_name: str, compute: str, clips) -> dict:
     rows = []
     for wav, ref in clips:
         t = time.perf_counter()
-        segments, _ = model.transcribe(str(wav), language="en", beam_size=1)
+        segments, _ = model.transcribe(load_wav_16k(wav), language="en", beam_size=1)
         text = " ".join(s.text for s in segments).strip()
         infer = time.perf_counter() - t
         dur = wav_duration(wav)

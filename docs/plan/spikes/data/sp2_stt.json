@@ -1,22 +1,22 @@
 {
-  "generated": "2026-11-03T21:56:21.697887+00:00",
+  "generated": "2026-11-03T22:00:36.589255+00:00",
   "fixtures": 12,
   "note": "SAPI-clean speech; comparative WER only",
   "configs": [
     {
       "model": "base",
       "compute": "int8",
-      "error": "TypeError(\"open() got an unexpected keyword argument 'metadata_errors'\")"
+      "error": "ModuleNotFoundError(\"No module named 'av'\")"
     },
     {
       "model": "small",
       "compute": "int8",
-      "error": "TypeError(\"open() got an unexpected keyword argument 'metadata_errors'\")"
+      "error": "ModuleNotFoundError(\"No module named 'av'\")"
     },
     {
       "model": "distil-small.en",
       "compute": "int8",
-      "error": "TypeError(\"open() got an unexpected keyword argument 'metadata_errors'\")"
+      "error": "ModuleNotFoundError(\"No module named 'av'\")"
     }
   ]
 }
