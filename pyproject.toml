@@ -5,6 +5,7 @@ description = "Hands-free voice-controlled desktop agent"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.9",
+    "tomli-w>=1.0",
     "PySide6>=6.8",
 ]
 
@@ -35,6 +36,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-m 'not manual'"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "manual: requires a real desktop / real apps (deselected by default)",
     "scenario: headless end-to-end scenario tests",

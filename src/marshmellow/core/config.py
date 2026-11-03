@@ -1,0 +1,70 @@
+"""Typed settings — one pydantic model is the only config schema (01-architecture §3.14).
+
+TOML on disk (tomllib read / tomli-w write). A missing or malformed file yields
+defaults plus a logged warning — the app never refuses to start over config.
+API keys are stored as credential-manager *references*, never in the TOML.
+"""
+
+from __future__ import annotations
+
+import logging
+import tomllib
+from pathlib import Path
+from typing import Literal
+
+import tomli_w
+from pydantic import BaseModel, Field
+
+from marshmellow.core.contracts import ActivationMode
+
+logger = logging.getLogger(__name__)
+
+
+class LLMProviderConfig(BaseModel):
+    kind: Literal["fake", "openai_compat", "ollama"] = "fake"
+    base_url: str = ""
+    model: str = ""
+    api_key_ref: str = ""  # Windows Credential Manager ref, never the key itself
+
+
+class ProvidersConfig(BaseModel):
+    llm: LLMProviderConfig = Field(default_factory=LLMProviderConfig)
+
+
+class SafetyConfig(BaseModel):
+    preset: Literal["relaxed", "standard", "strict"] = "standard"
+
+
+class UIConfig(BaseModel):
+    mascot_scale: float = 1.0
+    theme: Literal["dark", "light"] = "dark"
+
+
+class Settings(BaseModel):
+    activation: ActivationMode = "both"
+    hotkey: str = "ctrl+shift+m"
+    wake_phrase: str = "hey marshmellow"
+    autostart: bool = False
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+    stt_model: str = "base"  # M0-SP2: only config inside the latency budget
+    tts_voice: str = "en_US-lessac-medium"  # M0-SP7
+    safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    ui: UIConfig = Field(default_factory=UIConfig)
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            tomli_w.dumps(self.model_dump(mode="json")), encoding="utf-8"
+        )
+
+
+def load_settings(path: Path | None = None) -> Settings:
+    """Load settings from TOML, or defaults when absent/malformed."""
+    if path is None or not path.exists():
+        return Settings()
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        return Settings.model_validate(data)
+    except Exception:
+        logger.warning("Malformed config file %s; using defaults", path)
+        return Settings()
