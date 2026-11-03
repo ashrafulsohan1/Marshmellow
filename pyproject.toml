@@ -37,6 +37,7 @@ select = ["E", "F", "I", "UP", "B"]
 testpaths = ["tests"]
 addopts = "-m 'not manual'"
 asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "auto"
 markers = [
     "manual: requires a real desktop / real apps (deselected by default)",
     "scenario: headless end-to-end scenario tests",
