@@ -23,3 +23,9 @@ config.local.toml
 # OS
 Thumbs.db
 .DS_Store
+
+# Model binaries & spike artifacts (keep out of git; re-downloadable)
+*.onnx
+*.tflite
+docs/plan/spikes/data/sp4_voice/
+docs/plan/spikes/data/sp2_fixtures/
