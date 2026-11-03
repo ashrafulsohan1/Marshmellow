@@ -30,6 +30,11 @@ All outputs are reports in `docs/plan/spikes/`; each names a decision it resolve
 tray icon + static mascot states, `packs/windows.py` open-app path, console fixture runner (`simulate-spoken-instruction`).
 **E2E (deterministic):** instruction "open notepad" fed via console fixture → DE pack opens Notepad → `SpeakRequest` captured by FakeTTS.
 **DoD:** `uv run marshmellow` starts tray+mascot; E2E test green headless; contracts + fakes merged; all quality hooks active.
+**DoD evidence (2026-11-04):** 41 tests passed + 1 manual deselected · ruff clean · mypy strict clean (core) ·
+headless scenario E2E green (`open notepad` → `[started, step, result]` + ack + result spoken via FakeTTS) ·
+**real E2E run**: `python -m marshmellow.tools.simulate "open notepad"` opened a real Notepad window through the
+full loop and closed only the window it owned. Commits `2d00d93…ba5403e`. Tray+mascot launch verified offscreen;
+`uv run marshmellow` GUI entry lands with the audio loop in M2 (composition root exists: `App(headless=False)`).
 
 ### M2 — Voice loop end-to-end (size: M)
 **Goal:** real audio in, cloud LLM in the middle, voice out — hands-free for trivial tasks.
