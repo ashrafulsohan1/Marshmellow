@@ -3,7 +3,11 @@
 Implements the M1 ``Planner`` protocol (``tasks.manager.Planner``): a blocking
 ``run(instruction, execute)`` that TaskManager hops to a worker thread. The
 tool loop inside is asyncio so provider calls stay cancellable by the
-wall-clock timeout; the sync facade drives a private loop per call.
+wall-clock timeout; the sync facade marshals work onto ONE resident loop
+thread via ``run_coroutine_threadsafe``. The resident loop matters: the
+provider's pooled HTTP client is bound to the loop it first runs on, so a
+fresh loop per call would intermittently fail with
+``RuntimeError('Event loop is closed')`` on the second task.
 
 M2 tool set: ``open_app`` · ``wait`` · ``ask_user`` · ``finish`` — offered as
 JSON-schema function specs and mapped onto the executor seam as
@@ -30,6 +34,7 @@ import asyncio
 import importlib.resources
 import json
 import logging
+import threading
 from collections.abc import Callable, Sequence
 from typing import Final
 
@@ -153,25 +158,60 @@ class LLMPlanner:
         self._tools: list[dict[str, object]] = list(M2_TOOLS if tools is None else tools)
         self._max_steps = max_steps
         self._timeout_s = timeout_s
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
+        self._loop_lock = threading.Lock()
 
     # -- M1 Planner protocol (tasks.manager.Planner) ---------------------------
 
     def run(self, instruction: Instruction, execute: Executor) -> TaskResult:
         """Blocking entry point — TaskManager calls this on a worker thread."""
+        if threading.current_thread() is self._loop_thread:
+            raise RuntimeError("LLMPlanner.run() cannot be called from its own loop thread")
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self._run(instruction, execute))
-        raise RuntimeError(
-            "LLMPlanner.run() blocks; call it through TaskManager (asyncio.to_thread), "
-            "never from a running event loop"
+            pass  # normal path: a worker thread with no loop
+        else:
+            raise RuntimeError(
+                "LLMPlanner.run() blocks; call it through TaskManager (asyncio.to_thread), "
+                "never from a running event loop"
+            )
+        future = asyncio.run_coroutine_threadsafe(
+            self._run(instruction, execute), self._ensure_loop()
         )
+        return future.result()
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        """The one loop this planner ever uses.
+
+        Providers hold pooled HTTP clients bound to the loop they first run on
+        (AsyncOpenAI builds its client in __init__); a fresh loop per task
+        would hand the pool a dead loop on the next call.
+        """
+        with self._loop_lock:
+            if (
+                self._loop is None
+                or self._loop.is_closed()
+                or (self._loop_thread is not None and not self._loop_thread.is_alive())
+            ):
+                loop = asyncio.new_event_loop()
+                thread = threading.Thread(
+                    target=loop.run_forever, name="llm-planner-loop", daemon=True
+                )
+                thread.start()
+                self._loop = loop
+                self._loop_thread = thread
+            assert self._loop is not None
+            return self._loop
 
     # -- loop ------------------------------------------------------------------
 
     async def _run(self, instruction: Instruction, execute: Executor) -> TaskResult:
         try:
-            return await asyncio.wait_for(self._loop(instruction, execute), timeout=self._timeout_s)
+            return await asyncio.wait_for(
+                self._tool_loop(instruction, execute), timeout=self._timeout_s
+            )
         except TimeoutError:
             logger.warning("task timed out after %.1fs", self._timeout_s)
             return TaskResult(
@@ -183,7 +223,7 @@ class LLMPlanner:
             logger.exception("planner loop crashed")
             return TaskResult(ok=False, summary_to_speak=FAILURE_SUMMARY, details=repr(exc))
 
-    async def _loop(self, instruction: Instruction, execute: Executor) -> TaskResult:
+    async def _tool_loop(self, instruction: Instruction, execute: Executor) -> TaskResult:
         messages: list[LLMMessage] = self._opening_messages(instruction)
         trace: list[str] = []
         for _step in range(1, self._max_steps + 1):

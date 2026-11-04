@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -102,6 +103,64 @@ def _executor(observation: str = "window appeared", ok: bool = True):
 
 def _offered_names(req: LLMRequest) -> set[str]:
     return {str(tool["function"]["name"]) for tool in req.tools}
+
+
+class LoopBoundLLM:
+    """Mimics a pooled HTTP client's loop affinity — the committed OpenAICompatProvider
+    builds one long-lived AsyncOpenAI/httpx2 client in __init__, so reusing it on a
+    different event loop raises RuntimeError('Event loop is closed') exactly like this.
+    """
+
+    def __init__(self) -> None:
+        self.loops: list[asyncio.AbstractEventLoop] = []
+
+    @property
+    def capabilities(self) -> ProviderCaps:
+        return ProviderCaps(vision=False, tool_call=True, json_schema=False)
+
+    async def complete(self, req: LLMRequest) -> LLMResponse:
+        loop = asyncio.get_running_loop()
+        if any(seen is not loop for seen in self.loops):
+            raise RuntimeError("Event loop is closed")
+        self.loops.append(loop)
+        return LLMResponse(text="Done.", stop_reason="stop")
+
+
+def test_sequential_tasks_share_one_resident_loop() -> None:
+    llm = LoopBoundLLM()
+    execute, executed = _executor()
+    planner = LLMPlanner(provider=llm)
+
+    first = planner.run(_instruction("hello one"), execute)
+    second = planner.run(_instruction("hello two"), execute)
+
+    assert first.ok and second.ok  # pre-fix: second died on the first loop's connection
+    assert len(llm.loops) == 2
+    assert llm.loops[0] is llm.loops[1]
+    assert executed == []
+
+
+def test_concurrent_tasks_share_one_resident_loop() -> None:
+    llm = LoopBoundLLM()
+    execute, _ = _executor()
+    planner = LLMPlanner(provider=llm)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(planner.run, _instruction(f"hello {i}"), execute) for i in range(2)]
+        results = [f.result(timeout=10) for f in futures]
+
+    assert all(r.ok for r in results)
+    assert len(llm.loops) == 2
+    assert all(loop is llm.loops[0] for loop in llm.loops)
+
+
+async def test_run_rejected_inside_event_loop() -> None:
+    llm = ScriptedLLM([LLMResponse(text="Done.", stop_reason="stop")])
+    planner = LLMPlanner(provider=llm)
+    execute, _ = _executor()
+
+    with pytest.raises(RuntimeError, match="blocks"):
+        planner.run(_instruction("hello"), execute)
 
 
 def test_one_shot_shell_action_then_finish() -> None:
