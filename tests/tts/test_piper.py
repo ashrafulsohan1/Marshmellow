@@ -143,6 +143,53 @@ def test_resident_stream_speaks_one_utterance_per_say() -> None:
     speaker.quit()
 
 
+def test_multiline_text_becomes_one_protocol_line() -> None:
+    """Regression (review defect): an LLM reply with embedded newlines used to be
+    written verbatim, so the worker synthesized one utterance PER LINE while the
+    speaker consumed exactly one — the next say() played the leftover line's
+    audio and one utterance was never spoken."""
+    bus = EventBus()
+    played: list[bytes] = []
+    pcm1, pcm2 = b"\x01\x00" * 100, b"\x02\x00" * 100
+    proc = FakeProc(make_stream(22050, pcm1, pcm2))
+    speaker = PiperSpeaker(bus=bus, spawn=lambda _argv: proc, player=played.append)
+    speaker.start()
+
+    speaker.say(SpeakRequest(text="Result line one.\nResult line two."))
+    assert _wait_for(lambda: len(played) == 1)
+    assert proc.stdin.getvalue() == b"Result line one. Result line two.\n", (
+        "multi-line text must collapse to a single protocol line"
+    )
+
+    speaker.say(SpeakRequest(text="On it."))
+    assert _wait_for(lambda: len(played) == 2)
+    assert played == [pcm1, pcm2], "no leftover utterance may desync the next say()"
+    speaker.quit()
+
+
+def test_blank_text_writes_nothing_and_stays_framed() -> None:
+    """Whitespace-only text must not reach the worker: a blank stdin line makes
+    the worker emit no utterance at all, which would block the stream read
+    forever and deafen every later say()."""
+    bus = EventBus()
+    started: list[bool] = []
+    bus.subscribe(SpeakingStarted, lambda e: started.append(True))
+    played: list[bytes] = []
+    pcm = b"\x01\x00" * 50
+    proc = FakeProc(make_stream(22050, pcm))
+    speaker = PiperSpeaker(bus=bus, spawn=lambda _argv: proc, player=played.append)
+    speaker.start()
+
+    speaker.say(SpeakRequest(text="  \n\t "))
+    time.sleep(0.05)  # give the worker a beat to (not) act
+    assert proc.stdin.getvalue() == b""
+    assert not started and not played, "nothing speakable → nothing spoken"
+
+    speaker.say(SpeakRequest(text="On it."))
+    assert _wait_for(lambda: len(played) == 1), "stream stays framed after a blank"
+    speaker.quit()
+
+
 def test_quit_terminates_process_without_zombie() -> None:
     proc = FakeProc(b"")
     speaker = _speaker(EventBus(), proc, played=[])

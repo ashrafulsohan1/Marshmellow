@@ -211,8 +211,21 @@ class PiperSpeaker:
 
     def _speak(self, request: SpeakRequest, epoch: int) -> None:
         assert self._proc is not None
+        # The worker's protocol is one utterance per stdin line. Assistant text
+        # reaches SpeakRequest verbatim (orchestrator → TaskEvent payload), and
+        # an LLM reply can carry newlines: writing them verbatim makes the
+        # worker synthesize one utterance PER LINE while this method consumes
+        # exactly one — every later say() would play a leftover line's audio
+        # and one utterance would never be spoken. Collapse to a single spoken
+        # line. Whitespace-only text writes nothing: a blank line makes the
+        # worker emit no utterance at all, which would block the stream read
+        # forever.
+        spoken = " ".join(request.text.split())
+        if not spoken:
+            logger.info("nothing speakable in %r; skipping utterance", request.text)
+            return
         try:
-            self._proc.stdin.write((request.text + "\n").encode("utf-8"))  # type: ignore[union-attr]
+            self._proc.stdin.write((spoken + "\n").encode("utf-8"))  # type: ignore[union-attr]
             self._proc.stdin.flush()  # type: ignore[union-attr]
         except (OSError, ValueError):
             logger.exception("worker stdin write failed; dropping utterance")
