@@ -1,11 +1,12 @@
 """Piper TTS as a resident streaming subprocess (SP7: GPL → subprocess isolation).
 
-One piper process lives for the app's lifetime: text lines go in on stdin,
-complete WAVs come out on stdout (piper's default output). The RIFF header's
-data-size field makes utterance boundaries exact, so playback and the
-SpeakingStarted/Stopped events are deterministic. Playback honors the queue
-priority (ack < result < background) and `interrupt=True` drops everything
-pending.
+One worker process (``marshmellow.tts.piper_worker``, which imports piper only
+inside its own process) lives for the app's lifetime: text lines go in on
+stdin, length-prefixed raw PCM chunks come out on stdout — true streaming
+first audio with exact utterance boundaries (the 0-length terminator), which
+piper1-gpl's own stdout modes cannot give us (see piper_worker's docstring for
+the measured CLI behavior). Playback honors the queue priority
+(ack < result < background) and `interrupt=True` drops everything pending.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import struct
 import subprocess
 import sys
 import threading
@@ -65,36 +67,58 @@ def make_wav(pcm: bytes, sample_rate: int = 22050) -> bytes:
     return buf.getvalue()
 
 
-def _read_wav_stream(stream: io.RawIOBase, chunk_size: int = 4096) -> Iterator[bytes]:
-    """Yield PCM chunks of ONE complete WAV from a stream of concatenated WAVs.
+class _ChunkReader:
+    """Parses the worker's stdout protocol (see piper_worker) off one stream.
 
-    Assumes the canonical 44-byte header piper writes (16-bit mono PCM). On any
-    parse surprise, logs and yields nothing rather than playing garbage.
+    Yields PCM chunks of the CURRENT utterance in ≤4096-byte pieces; sample
+    rate arrives once per utterance before the chunks. ``current_rate`` holds
+    the latest declared rate. On any protocol surprise, logs and yields
+    nothing rather than playing garbage.
     """
 
-    def exact(n: int) -> bytes | None:
+    CHUNK_PIECE = 4096
+
+    def __init__(self, stream: io.RawIOBase) -> None:
+        self._stream = stream
+        self.current_rate: int | None = None
+
+    def _exact(self, n: int) -> bytes | None:
         buf = b""
         while len(buf) < n:
-            part = stream.read(n - len(buf))
+            part = self._stream.read(n - len(buf))
             if not part:
                 return None
             buf += part
         return buf
 
-    header = exact(44)
-    if header is None:
-        return
-    if header[:4] != b"RIFF" or header[8:12] != b"WAVE":
-        logger.warning("piper stdout is not a WAV stream; dropping utterance")
-        return
-    data_size = int.from_bytes(header[40:44], "little")
-    remaining = data_size
-    while remaining > 0:
-        part = exact(min(chunk_size, remaining))
-        if not part:
-            break
-        remaining -= len(part)
-        yield part
+    def utterances(self) -> Iterator[list[bytes]]:
+        """Yield one complete utterance (list of PCM chunks) at a time."""
+        while True:
+            header = self._exact(4)
+            if header is None:
+                return
+            (rate,) = struct.unpack("<I", header)
+            if rate == 0:
+                logger.warning("worker sent a zero sample rate; dropping utterance")
+                return
+            self.current_rate = rate
+            chunks: list[bytes] = []
+            while True:
+                size_raw = self._exact(4)
+                if size_raw is None:
+                    return
+                (size,) = struct.unpack("<I", size_raw)
+                if size == 0:
+                    break  # end of this utterance
+                remaining = size
+                while remaining > 0:
+                    piece = self._exact(min(self.CHUNK_PIECE, remaining))
+                    if piece is None:
+                        logger.warning("worker stream ended mid-chunk")
+                        return
+                    remaining -= len(piece)
+                    chunks.append(piece)
+            yield chunks
 
 
 class PiperSpeaker:
@@ -121,6 +145,8 @@ class PiperSpeaker:
         self._silence_epoch = 0
         self._cv = threading.Condition()
         self._alive = False
+        self._reader: _ChunkReader | None = None
+        self._utterances: Iterator[list[bytes]] | None = None
         self._worker = threading.Thread(target=self._run, name="piper-worker", daemon=True)
 
     def start(self) -> None:
@@ -167,6 +193,9 @@ class PiperSpeaker:
 
     def _run(self) -> None:
         self._proc = self._spawn(self._argv())
+        if self._proc.stdout is not None:
+            self._reader = _ChunkReader(self._proc.stdout)  # type: ignore[arg-type]
+            self._utterances = self._reader.utterances()
         while self._alive:
             with self._cv:
                 if not self._pending:
@@ -186,36 +215,40 @@ class PiperSpeaker:
             self._proc.stdin.write((request.text + "\n").encode("utf-8"))  # type: ignore[union-attr]
             self._proc.stdin.flush()  # type: ignore[union-attr]
         except (OSError, ValueError):
-            logger.exception("piper stdin write failed; dropping utterance")
+            logger.exception("worker stdin write failed; dropping utterance")
             return
         self._bus.emit(SpeakingStarted())
         cancelled = False
         try:
-            stream = _read_wav_stream(self._proc.stdout)  # type: ignore[arg-type]
-            for chunk in stream:
+            # Pull EXACTLY ONE utterance: next() returns as soon as this
+            # utterance's terminator is consumed — the resident stream never
+            # EOFs, so iterating further would block on the next utterance's
+            # header and never emit SpeakingStopped (the exact stdout hazard
+            # Review Focus 3 warns about).
+            chunks = next(self._utterances, None) if self._utterances else None
+            if chunks is None:
+                logger.error("piper worker stream ended; utterance dropped")
+                return
+            if self._reader is not None and self._reader.current_rate:
+                self._sample_rate = self._reader.current_rate
+            for chunk in chunks:
                 with self._cv:
                     cancelled = epoch != self._silence_epoch or not self._alive
                 if cancelled:
+                    # The whole utterance is buffered before it yields, so the
+                    # stream already sits at the next header — dropping the rest
+                    # of the playback needs no drain pass.
                     break
                 self._player(chunk)
-            if cancelled and self._alive:
-                # Drain the rest of this utterance unheard: piper keeps producing
-                # the WAV it was asked for, and skipping to its end keeps the
-                # stdout framing exact for the next utterance.
-                for _ in stream:
-                    pass
         except Exception:
             logger.exception("piper playback failed")
         finally:
             self._bus.emit(SpeakingStopped())
 
     def _argv(self) -> list[str]:
-        argv = [sys.executable, "-m", "piper"]
+        argv = [sys.executable, "-m", "marshmellow.tts.piper_worker"]
         if self._model is not None:
-            argv += ["--model", str(self._model)]
-            config = Path(str(self._model) + ".json")
-            if config.exists():
-                argv += ["--config", str(config)]
+            argv.append(str(self._model))
         return argv
 
     def _default_spawn(self, argv: list[str]) -> subprocess.Popen:

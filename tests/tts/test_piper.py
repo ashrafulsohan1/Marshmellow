@@ -1,6 +1,7 @@
 """Piper TTS subprocess tests run on injected seams — no audio hardware, no GPL import."""
 
 import io
+import struct
 import time
 from pathlib import Path
 
@@ -13,7 +14,17 @@ from marshmellow.core.contracts import (
     SpeakRequest,
 )
 from marshmellow.tts import piper as piper_mod
-from marshmellow.tts.piper import PiperSpeaker, default_voice_model, make_wav
+from marshmellow.tts.piper import PiperSpeaker, default_voice_model
+
+
+def make_stream(sample_rate: int, *utterances: bytes) -> bytes:
+    """Bytes a piper_worker subprocess would write for these utterances."""
+    out = bytearray()
+    for pcm in utterances:
+        out += struct.pack("<I", sample_rate)
+        out += struct.pack("<I", len(pcm)) + pcm
+        out += struct.pack("<I", 0)
+    return bytes(out)
 
 
 def test_default_voice_model_search_order(
@@ -81,7 +92,7 @@ def test_say_streams_pcm_and_publishes_events() -> None:
     bus.subscribe(SpeakingStopped, lambda e: events.append(SpeakingStopped))
     played: list[bytes] = []
     pcm = b"\x01\x00" * 100
-    proc = FakeProc(make_wav(pcm, 22050))
+    proc = FakeProc(make_stream(22050, pcm))
     speaker = _speaker(bus, proc, played)
 
     speaker.start()
@@ -92,6 +103,44 @@ def test_say_streams_pcm_and_publishes_events() -> None:
     assert played == [pcm]
     assert events == [SpeakingStarted, SpeakingStopped]
     speaker.stop()
+
+
+def test_worker_stream_advertises_sample_rate() -> None:
+    """The protocol header must reach the speaker: a 16 kHz voice plays at 16 kHz."""
+    bus = EventBus()
+    played: list[bytes] = []
+    pcm = b"\x02\x00" * 50
+    speaker = PiperSpeaker(
+        bus=bus, spawn=lambda _argv: FakeProc(make_stream(16000, pcm)),
+        player=played.append,
+    )
+    speaker.start()
+    speaker.say(SpeakRequest(text="test"))
+    assert _wait_for(lambda: bool(played))
+    assert speaker._sample_rate == 16000
+    speaker.quit()
+
+
+def test_resident_stream_speaks_one_utterance_per_say() -> None:
+    """Regression (real stdout never EOFs): one say() must consume exactly one
+    utterance and emit SpeakingStopped — never block pulling the next one."""
+    bus = EventBus()
+    stopped: list[bool] = []
+    bus.subscribe(SpeakingStopped, lambda e: stopped.append(True))
+    played: list[bytes] = []
+    pcm1, pcm2 = b"\x01\x00" * 100, b"\x02\x00" * 100
+    speaker = PiperSpeaker(
+        bus=bus, spawn=lambda _argv: FakeProc(make_stream(22050, pcm1, pcm2)),
+        player=played.append,
+    )
+    speaker.start()
+    speaker.say(SpeakRequest(text="first"))
+    assert _wait_for(lambda: len(stopped) == 1), "first utterance must complete alone"
+    assert played == [pcm1]
+    speaker.say(SpeakRequest(text="second"))
+    assert _wait_for(lambda: len(stopped) == 2), "second utterance must complete"
+    assert played == [pcm1, pcm2]
+    speaker.quit()
 
 
 def test_quit_terminates_process_without_zombie() -> None:
@@ -113,7 +162,7 @@ def test_stop_is_a_barge_in_kill_and_speaker_stays_usable() -> None:
     bus.subscribe(SpeakingStopped, lambda e: stopped.append(True))
     played: list[bytes] = []
     pcm = b"\x01\x00" * 500_000  # long utterance → plenty of chunks to barge into
-    proc = FakeProc(make_wav(pcm, 22050))
+    proc = FakeProc(make_stream(22050, pcm))
 
     def slow_player(chunk: bytes) -> None:
         time.sleep(0.001)  # playback takes ~250ms, so stop() lands mid-utterance
