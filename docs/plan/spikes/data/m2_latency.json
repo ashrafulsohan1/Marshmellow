@@ -1,0 +1,146 @@
+{
+  "generated": "2026-11-04T18:52:10.375483+00:00",
+  "machine_note": "user's Windows 11 desktop (the dev machine), CPU-only inference",
+  "git_head": "a10db87",
+  "wake_to_ack": {
+    "ok": true,
+    "note": "scripted crossing scorer on the real watcher thread + real VoiceLoop; production detection adds one 80 ms frame + ~4-5 ms openWakeWord scoring (SP3)",
+    "wall_s": 0.0076,
+    "scoring_frame_to_wake_event_s": 0.0004,
+    "scoring_frame_to_listening_ack_s": 0.0003
+  },
+  "end_speech_to_transcript": {
+    "ok": true,
+    "note": "real VAD close (0.7 s designed silence) + real STT at real-time feed pacing; 12 SP2 fixtures (long utterances) + one SAPI short command; medians across spaced-out sweeps (desktop load varies run-to-run)",
+    "runs": 3,
+    "run_medians_s": [
+      1.731,
+      1.762,
+      1.877
+    ],
+    "n_per_run": 13,
+    "short_command": {
+      "wav": "_bench_open_notepad (SAPI)",
+      "audio_s": 1.79,
+      "end_speech_to_transcript_s": 1.602,
+      "stt_s": 0.77,
+      "transcript": "Open Notepad."
+    },
+    "long_utterances_median_s": 1.797,
+    "p95_long_s": 2.363,
+    "stt_only_median_s": 0.905,
+    "rows_last_sweep": [
+      {
+        "wav": "phrase_00.wav",
+        "audio_s": 5.5,
+        "end_speech_to_transcript_s": 1.884,
+        "stt_s": 1.085,
+        "transcript": "Hey Marshmello, open the browser and check if the YouTube channel has new videos."
+      },
+      {
+        "wav": "phrase_01.wav",
+        "audio_s": 2.98,
+        "end_speech_to_transcript_s": 1.81,
+        "stt_s": 0.915,
+        "transcript": "Open Notepad and Type Hello World."
+      },
+      {
+        "wav": "phrase_02.wav",
+        "audio_s": 2.94,
+        "end_speech_to_transcript_s": 1.739,
+        "stt_s": 0.907,
+        "transcript": "What is the weather forecast for tomorrow?"
+      },
+      {
+        "wav": "phrase_03.wav",
+        "audio_s": 3.14,
+        "end_speech_to_transcript_s": 2.031,
+        "stt_s": 1.104,
+        "transcript": "turn the volume down to 20%."
+      },
+      {
+        "wav": "phrase_04.wav",
+        "audio_s": 3.74,
+        "end_speech_to_transcript_s": 1.8,
+        "stt_s": 0.968,
+        "transcript": "open file explorer and go to the downloads folder."
+      },
+      {
+        "wav": "phrase_05.wav",
+        "audio_s": 3.23,
+        "end_speech_to_transcript_s": 2.921,
+        "stt_s": 1.996,
+        "transcript": "search for flights to Seattle next weekend."
+      },
+      {
+        "wav": "phrase_06.wav",
+        "audio_s": 3.36,
+        "end_speech_to_transcript_s": 1.868,
+        "stt_s": 1.039,
+        "transcript": "play my Spotify playlist called Focus."
+      },
+      {
+        "wav": "phrase_07.wav",
+        "audio_s": 3.65,
+        "end_speech_to_transcript_s": 1.844,
+        "stt_s": 0.917,
+        "transcript": "Take a screenshot and send it to Anna on WhatsApp."
+      },
+      {
+        "wav": "phrase_08.wav",
+        "audio_s": 3.2,
+        "end_speech_to_transcript_s": 1.87,
+        "stt_s": 1.039,
+        "transcript": "set a reminder for 9am on Friday."
+      },
+      {
+        "wav": "phrase_09.wav",
+        "audio_s": 3.52,
+        "end_speech_to_transcript_s": 2.66,
+        "stt_s": 1.701,
+        "transcript": "Close all windows and put the computer to sleep."
+      },
+      {
+        "wav": "phrase_10.wav",
+        "audio_s": 3.46,
+        "end_speech_to_transcript_s": 2.264,
+        "stt_s": 1.434,
+        "transcript": "What is the GitHub repository for this project?"
+      },
+      {
+        "wav": "phrase_11.wav",
+        "audio_s": 2.75,
+        "end_speech_to_transcript_s": 2.209,
+        "stt_s": 1.378,
+        "transcript": "Tell me a joke about Marshmellos."
+      },
+      {
+        "wav": "_bench_open_notepad (SAPI)",
+        "audio_s": 1.79,
+        "end_speech_to_transcript_s": 2.131,
+        "stt_s": 1.3,
+        "transcript": "Open Notepad."
+      }
+    ]
+  },
+  "per_step_engine": {
+    "ok": true,
+    "note": "scripted provider (0 ms RTT): measures the engine-side per-step overhead (manager hop + prompt build + tool dispatch + finish). The cloud LLM RTT is NOT included \u2014 no BYOK key is stored on this machine yet (D7/OQ-2); the first BYOK call doubles as the SP5 provider probe.",
+    "provider_calls": 2,
+    "turn_total_s": 0.0102,
+    "spoken": "Opened notepad."
+  },
+  "tts_first_audio": {
+    "ok": true,
+    "note": "real resident piper subprocess (python -m piper), first PCM chunk after say(); chunks discarded by the player seam \u2014 silent measurement",
+    "model": "en_US-lessac-medium.onnx",
+    "cold_first_audio_s": 12.46,
+    "warm_first_audio_median_s": 0.065,
+    "warm_first_audio_all_s": [
+      0.065,
+      0.063,
+      0.067
+    ],
+    "long_utterance_first_audio_s": 0.49
+  }
+}

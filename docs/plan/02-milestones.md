@@ -45,6 +45,36 @@ piper TTS, mascot live states, barge-in + kill switch, echo guard.
 per agent step ≤ 3 s · TTS first audio ≤ 500 ms · simple op total ≤ 15 s.
 **DoD:** budget table measured and documented; control intents (stop/mute) work; a 10-utterance audio-fixture suite passes.
 
+**DoD evidence (2026-11-04/05, machine: the dev desktop, CPU-only):** full gate green (`uv run pytest -q`:
+142 passed + 1 manual deselected · ruff clean · mypy strict clean) · control intents covered headless
+(`tests/test_voice_loop.py`: stop/mute/kill/barge-in/echo-guard) · 12-utterance SP2 fixture suite passes
+(WER ≤ 0.35, RTF < 1.0) · live composition real (`uv run python -m marshmellow` boots: mic capture,
+base/int8 STT, piper voice resolved, wake degrades to hotkey-only per D8 — session log `%LOCALAPPDATA%/Marshmellow/logs`).
+
+**Latency budget measured** (`tools/latency_m2.py` → [spikes/data/m2_latency.json](spikes/data/m2_latency.json), at HEAD `a10db87`, 2026-11-04):
+
+| Measure | Target | Measured | Verdict |
+|---|---|---|---|
+| wake→listening-ack | ≤ 0.5 s | **0.3 ms** crossing-frame → listening state (real watcher thread + real VoiceLoop; production adds one 80 ms frame + ~4–5 ms openWakeWord scoring per SP3) | ✅ huge margin |
+| end-speech→transcript | ≤ 1.5 s | short command ("open notepad", 1.79 s clip): **1.60 s** = 0.7 s designed VAD close + 0.77 s STT · 12 SP2 fixtures (2.8–5.5 s utterances): median **1.80 s**, sweep medians 1.73 / 1.76 / 1.88 s | ❌ near miss, close-dominated |
+| per agent step | ≤ 3 s | engine overhead **~10 ms** per scripted 2-call turn (TaskManager + prompt build + tool dispatch); **cloud RTT not yet measurable — no BYOK key stored** (D7/OQ-2 onboarding pending; first real call doubles as the SP5 probe) | ⏳ engine part trivially passes |
+| TTS first audio | ≤ 0.5 s | warm (resident worker, hot model): **0.065 s** short ack (0.063–0.067 across 3) · 0.49 s long sentence · cold (first utterance incl. spawn + model load) 4.2–15.2 s across runs, paid once at startup | ✅ |
+| simple op total | ≤ 15 s | component sum for "open notepad": ~0.1 (wake/ack) + ~1.6 (speech→transcript) + ~0.07 (ack audio) + planner (engine ~10 ms + **cloud RTT pending**) + shell action ≈ **2–4 s + one cloud RTT** | ✅ on track, cloud RTT open |
+
+Findings: (1) the transcript budget is **dominated by the designed 0.7 s silence close + base/int8 decode of
+silence-padded segments** (STT-only median 0.91 s — inside budget on its own); the levers, in impact order, are
+trimming the segment's trailing silence before decode, a shorter close setting, and SP2's distil-with-VAD-trim
+accuracy-upgrade path; left as a user decision, not silently tuned. (2) The piper integration was rewritten during
+measurement — piper1-gpl ≥ 1.8 cannot stream WAV on stdout (default = ffplay-or-file; `-f -` buffers whole
+utterances), so `tts/piper_worker.py` now speaks a framed raw-PCM protocol from its own subprocess (fix `1c7fbab`).
+(3) This is an active desktop: STT reads ~2× worse when other work loads the CPU, hence medians over spaced-out
+sweeps (`--stt-runs 3`) rather than a single lucky run; the JSON keeps per-sweep medians and the last sweep's rows.
+
+Commits `f112f50…a10db87` (Tasks 1–8 landed in their own `feat:` commits — see git log; Task 9 added:
+live composition `8edfad9`, piper streaming fix `1c7fbab`, bench harness `9cb16a5`+`399f19c`+`a10db87`,
+evidence `docs:` commit).
+**Assisted hands-free E2E is the one remaining manual step** → [pending-user-verifications.md](pending-user-verifications.md).
+
 ### M3 — Generic UI interaction (size: L)
 **Goal:** the core promise — operate *any* app via the generic protocol, safely.
 **Scope:** UIAReader + registry, vision fallback + SoM, ActionLayer (UIA-first + SendInput), planner tool loop with
