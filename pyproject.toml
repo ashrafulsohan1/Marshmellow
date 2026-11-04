@@ -15,6 +15,7 @@ dependencies = [
     "PySide6>=6.8",
     "openwakeword>=0.6",
     "sounddevice>=0.5",
+    "uiautomation>=2.0.29",
 ]
 
 [tool.uv]
@@ -63,6 +64,11 @@ markers = [
 
 [tool.mypy]
 python_version = "3.12"
-packages = ["marshmellow.core"]
+packages = ["marshmellow.core", "marshmellow.perception"]
 mypy_path = "src"
 strict = true
+
+# uiautomation ships no stubs/py.typed; the real walker's Control objects are Any.
+[[tool.mypy.overrides]]
+module = "uiautomation"
+ignore_missing_imports = true

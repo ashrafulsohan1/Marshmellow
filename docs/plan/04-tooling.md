@@ -13,7 +13,7 @@ exists open source. This doc decides **which ingredients we adopt vs build**.
 | VAD | `silero-vad` | MIT | tiny, robust, battle-tested | WebRTC VAD |
 | Wake word | `openWakeWord` (0.6.0) | **Apache-2.0 code; bundled pretrained models CC BY-NC-SA 4.0 → ship only self-trained models** (SP7) | offline; "hey marshmellow" trainable in <1 h via synthetic-data pipeline (SP7) | hotkey-only mode (D2 setting) — Porcupine has no free tier since 2026-06-30 (SP7) |
 | TTS | `piper` (piper1-gpl ≥1.8.0) | **GPL-3.0-or-later** since 1.3/1.8 (last MIT: 1.2.0) → run as an isolated **subprocess**, never an in-process import (SP7) | offline, fast; voice `en_US-lessac-medium` from rhasspy/piper-voices | edge-tts, opt-in only, pin ≥7.3.1 (SP7) |
-| UIA access | `uiautomation` (2.0.29) + `pywinauto` (pin 0.6.9 stable) | **Apache-2.0** / BSD-3-Clause (SP7) | tree walking + patterns; pywinauto for dialogs/depth (1.0.0b1 revived Oct 2026 — evaluate in M3) | COM interop via ctypes |
+| UIA access | `uiautomation` (2.0.29) + `pywinauto` (pin 0.6.9 stable) | **Apache-2.0** / BSD-3-Clause (SP7) | tree walking + patterns — **ADOPTED in M3 Task 1** (`perception/uia_reader.py`; confirms the SP7 table); pywinauto for dialogs/depth (1.0.0b1 revived Oct 2026 — evaluate in M3 only if `uiautomation` hits a wall) | COM interop via ctypes |
 | Input synthesis | **raw SendInput (ctypes)** | stdlib | primary path — `pyautogui` is stale (last release May 2023, SP7) | pyautogui only if a helper is needed |
 | Screenshots | `mss` | MIT | fast multi-monitor capture | PIL.ImageGrab |
 | GUI/tray/mascot | `PySide6` | LGPL-3.0 (dynamic link OK) | tray, frameless overlay, widgets, animations | — |
