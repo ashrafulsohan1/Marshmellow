@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from marshmellow.core.config import Settings, load_settings
+from marshmellow.core import config as config_mod
+from marshmellow.core.config import Settings, default_config_path, load_settings
 
 
 def test_defaults_when_file_missing(tmp_path: Path) -> None:
@@ -34,3 +35,30 @@ def test_malformed_toml_gives_defaults(
     s = load_settings(p)
     assert s.activation == "both"
     assert any("config" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_config_discovery_env_var_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    p = tmp_path / "explicit.toml"
+    p.write_text("", encoding="utf-8")
+    monkeypatch.setenv("MARSHMELLOW_CONFIG", str(p))
+    assert default_config_path() == p
+
+
+def test_config_discovery_repo_local_before_product_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MARSHMELLOW_CONFIG", raising=False)
+    monkeypatch.setattr(config_mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lappdata"))
+    assert default_config_path() is None  # neither exists → defaults
+
+    (tmp_path / "config.local.toml").write_text("", encoding="utf-8")
+    assert default_config_path() == tmp_path / "config.local.toml"
+
+    (tmp_path / "config.local.toml").unlink()
+    product = tmp_path / "lappdata" / "Marshmellow"
+    product.mkdir(parents=True)
+    (product / "config.toml").write_text("", encoding="utf-8")
+    assert default_config_path() == product / "config.toml"

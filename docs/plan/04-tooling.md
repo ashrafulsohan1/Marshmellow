@@ -9,6 +9,7 @@ exists open source. This doc decides **which ingredients we adopt vs build**.
 | Component | Pick | License | Why | Fallback |
 |---|---|---|---|---|
 | STT | `faster-whisper` (1.2.1) | MIT | CTranslate2 Whisper, int8 CPU, streaming-capable — SP7 CONFIRM-ADOPT | API STT (opt-in) |
+| Mic capture | `sounddevice` (≥0.5) | MIT | PortAudio WASAPI in/out for capture + piper PCM playback (M2 Task 4) | wave + winmm (no) |
 | VAD | `silero-vad` | MIT | tiny, robust, battle-tested | WebRTC VAD |
 | Wake word | `openWakeWord` (0.6.0) | **Apache-2.0 code; bundled pretrained models CC BY-NC-SA 4.0 → ship only self-trained models** (SP7) | offline; "hey marshmellow" trainable in <1 h via synthetic-data pipeline (SP7) | hotkey-only mode (D2 setting) — Porcupine has no free tier since 2026-06-30 (SP7) |
 | TTS | `piper` (piper1-gpl ≥1.8.0) | **GPL-3.0-or-later** since 1.3/1.8 (last MIT: 1.2.0) → run as an isolated **subprocess**, never an in-process import (SP7) | offline, fast; voice `en_US-lessac-medium` from rhasspy/piper-voices | edge-tts, opt-in only, pin ≥7.3.1 (SP7) |

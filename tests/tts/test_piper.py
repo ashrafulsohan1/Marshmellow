@@ -2,6 +2,9 @@
 
 import io
 import time
+from pathlib import Path
+
+import pytest
 
 from marshmellow.core.bus import EventBus
 from marshmellow.core.contracts import (
@@ -9,7 +12,32 @@ from marshmellow.core.contracts import (
     SpeakingStopped,
     SpeakRequest,
 )
-from marshmellow.tts.piper import PiperSpeaker, make_wav
+from marshmellow.tts import piper as piper_mod
+from marshmellow.tts.piper import PiperSpeaker, default_voice_model, make_wav
+
+
+def test_default_voice_model_search_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MARSHMELLOW_VOICE_DIR", raising=False)
+    monkeypatch.setattr(piper_mod, "REPO_ROOT", tmp_path)  # isolate from the real voices/
+    voice = tmp_path / "voices" / "en_US-lessac-medium.onnx"
+    assert default_voice_model("en_US-lessac-medium") is None  # nothing anywhere
+
+    voice.parent.mkdir(parents=True)
+    voice.write_bytes(b"onnx")
+    found = default_voice_model("en_US-lessac-medium")
+    assert found == voice  # repo voices/ dir
+
+    env_dir = tmp_path / "envdir"
+    env_dir.mkdir()
+    (env_dir / "en_US-lessac-medium.onnx").write_bytes(b"onnx")
+    monkeypatch.setenv("MARSHMELLOW_VOICE_DIR", str(env_dir))
+    assert default_voice_model("en_US-lessac-medium") == env_dir / (
+        "en_US-lessac-medium.onnx"
+    )  # env override wins
+
+    assert default_voice_model("en_US-missing-medium") is None
 
 
 def _wait_for(predicate, timeout: float = 5.0) -> bool:

@@ -10,6 +10,9 @@ class FakeTTS:
         self.spoken: list[SpeakRequest] = []
         self.stop_calls = 0
 
+    def start(self) -> None:
+        """Lifecycle seam (PiperSpeaker starts its worker); nothing to do here."""
+
     def say(self, request: SpeakRequest) -> None:
         self.spoken.append(request)
 

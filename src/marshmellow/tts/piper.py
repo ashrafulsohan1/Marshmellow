@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -29,6 +30,28 @@ from marshmellow.core.contracts import (
 logger = logging.getLogger(__name__)
 
 _PRIORITY = {"ack": 0, "result": 1, "background": 2}
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def default_voice_model(voice: str) -> Path | None:
+    """Locate the piper ONNX model for `voice` (e.g. ``en_US-lessac-medium``).
+
+    Search order: the ``MARSHMELLOW_VOICE_DIR`` env var, then ``voices/`` in the
+    repo checkout (what ``python -m piper.download_voices <voice>`` fills).
+    Model binaries stay out of git (re-downloadable), so None means "no voice
+    on this machine" — the composition root degrades instead of guessing.
+    """
+    dirs = []
+    env_dir = os.environ.get("MARSHMELLOW_VOICE_DIR")
+    if env_dir:
+        dirs.append(Path(env_dir))
+    dirs.append(REPO_ROOT / "voices")
+    for directory in dirs:
+        candidate = directory / f"{voice}.onnx"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def make_wav(pcm: bytes, sample_rate: int = 22050) -> bytes:

@@ -8,6 +8,7 @@ API keys are stored as credential-manager *references*, never in the TOML.
 from __future__ import annotations
 
 import logging
+import os
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -18,6 +19,8 @@ from pydantic import BaseModel, Field
 from marshmellow.core.contracts import ActivationMode
 
 logger = logging.getLogger(__name__)
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class LLMProviderConfig(BaseModel):
@@ -56,6 +59,28 @@ class Settings(BaseModel):
         path.write_text(
             tomli_w.dumps(self.model_dump(mode="json")), encoding="utf-8"
         )
+
+
+def default_config_path() -> Path | None:
+    """Where `load_settings` looks when the caller passes no path (discovery order):
+
+    1. ``MARSHMELLOW_CONFIG`` env var (explicit override),
+    2. ``config.local.toml`` next to the repo checkout (dev; gitignored),
+    3. ``%LOCALAPPDATA%/Marshmellow/config.toml`` (the product location, §3.14).
+
+    Returns None when nothing exists — the app then runs on defaults.
+    """
+    env = os.environ.get("MARSHMELLOW_CONFIG")
+    if env:
+        return Path(env)
+    candidates = [REPO_ROOT / "config.local.toml"]
+    lappdata = os.environ.get("LOCALAPPDATA")
+    if lappdata:
+        candidates.append(Path(lappdata) / "Marshmellow" / "config.toml")
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
 
 
 def load_settings(path: Path | None = None) -> Settings:

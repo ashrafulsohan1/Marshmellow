@@ -46,6 +46,7 @@ from marshmellow.tts.fake import FakeTTS
 from marshmellow.ui.tray import TrayAction
 
 if TYPE_CHECKING:
+    from marshmellow.tts.piper import PiperSpeaker
     from marshmellow.ui.mascot import Mascot
     from marshmellow.ui.tray import Tray
 
@@ -95,8 +96,8 @@ class App:
         self.headless = headless
         self.bus = EventBus()
         setup_logging(log_dir or _default_log_dir())
-        self.stt = stt if stt is not None else FakeSTT()
-        self.tts = FakeTTS()
+        self.stt = stt if stt is not None else self._build_stt()
+        self.tts = self._build_tts()
         self.pack: DEShell = pack if pack is not None else WindowsPack()
         self.planner = self._build_planner(settings)
         self.manager = TaskManager(
@@ -127,6 +128,7 @@ class App:
             self.tray.show()
         if self.mascot is not None:
             self.mascot.show()
+        self.tts.start()
         self.voice.start()
         if self.audio_engine is not None:
             self.audio_engine.start()
@@ -155,6 +157,37 @@ class App:
         spec_id = uuid.uuid4().hex[:8]
         logger.info("instruction: %s", normalized)
         return await self.manager.submit(TaskSpec(id=spec_id, instruction=normalized))
+
+    @property
+    def quit_requested(self) -> bool:
+        """Tray quit sets this; the app entry loop polls it (never joins from the bus)."""
+        return self._quit_requested
+
+    def _build_stt(self) -> Transcriber:
+        """Real faster-whisper for live runs; the fake keeps headless runs silent-fast."""
+        if self.headless:
+            return FakeSTT()
+        from marshmellow.stt.fasterwhisper import FasterWhisperSTT
+
+        return FasterWhisperSTT(model=self.settings.stt_model)
+
+    def _build_tts(self) -> FakeTTS | PiperSpeaker:
+        """Real piper subprocess for live runs; degrade to silent when no voice exists."""
+        if self.headless:
+            return FakeTTS()
+        from marshmellow.tts.piper import PiperSpeaker, default_voice_model
+
+        model = default_voice_model(self.settings.tts_voice)
+        if model is None:
+            logger.error(
+                "no piper voice %r on this machine (set MARSHMELLOW_VOICE_DIR or run "
+                "`uv run python -m piper.download_voices %s`); TTS stays silent",
+                self.settings.tts_voice,
+                self.settings.tts_voice,
+            )
+            return FakeTTS()
+        logger.info("TTS voice: %s (%s)", self.settings.tts_voice, model)
+        return PiperSpeaker(bus=self.bus, model=model)
 
     def _build_planner(self, settings: Settings) -> Planner:
         """D7: the provider setting picks the planner behind TaskManager."""

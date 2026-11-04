@@ -5,6 +5,8 @@ import pytest
 from marshmellow.app import App
 from marshmellow.core.config import Settings
 from marshmellow.packs.base import ShellResult
+from marshmellow.stt.fake import FakeSTT
+from marshmellow.tts.fake import FakeTTS
 
 
 class RecordingPack:
@@ -45,4 +47,16 @@ async def test_chat_instruction_never_touches_the_pack(tmp_path) -> None:
     assert handle.result is not None and handle.result.ok
     assert pack.calls == []
     assert app.tts.spoken  # still spoken back to the user
+    app.stop()
+
+
+async def test_headless_composition_stays_on_fakes_and_reports_quit(
+    tmp_path,
+) -> None:
+    """The live entry (`python -m marshmellow`) is the only non-headless composition;
+    headless runs must never load real models or open devices."""
+    app = App(settings=Settings(), headless=True, log_dir=tmp_path)
+    assert isinstance(app.stt, FakeSTT)
+    assert isinstance(app.tts, FakeTTS)
+    assert app.quit_requested is False
     app.stop()
