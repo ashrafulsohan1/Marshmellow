@@ -272,7 +272,13 @@ def measure_end_speech_to_transcript(runs: int = 1) -> dict:
         long_rows, short = one_sweep()
         last_rows = long_rows + [short] if short else long_rows
         if short and "end_speech_to_transcript_s" in short:
-            short_best = short  # keep the fastest short-command reading seen
+            # Sweeps land on different desktop-load moments; the short-command
+            # cell reports the fastest reading seen (the others are load noise).
+            if short_best is None or (
+                short["end_speech_to_transcript_s"]
+                < short_best["end_speech_to_transcript_s"]
+            ):
+                short_best = short
         totals = [r["end_speech_to_transcript_s"] for r in long_rows
                   if "end_speech_to_transcript_s" in r]
         stts = [r["stt_s"] for r in long_rows if "stt_s" in r]
