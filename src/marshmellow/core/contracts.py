@@ -158,6 +158,27 @@ class SpeakingStopped(BaseModel):
     """TTS playback ended (one event per utterance)."""
 
 
+class WakeDetected(BaseModel):
+    """Wake phrase scored >= threshold (M0-SP3: 0.5); carried for tuning and logs."""
+
+    score: float
+
+
+class HotkeyPressed(BaseModel):
+    combo: str
+
+
+class HotkeyReleased(BaseModel):
+    combo: str
+
+
+class ActivationDegraded(BaseModel):
+    """An activation channel failed to start; `message` is spoken verbatim by the app."""
+
+    channel: Literal["hotkey", "wake_word"]
+    message: str
+
+
 class LLMMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str

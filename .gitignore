@@ -29,3 +29,5 @@ Thumbs.db
 *.tflite
 docs/plan/spikes/data/sp4_voice/
 docs/plan/spikes/data/sp2_fixtures/
+docs/plan/spikes/data/sp3_dev/
+docs/plan/spikes/data/sp3_dev_models/

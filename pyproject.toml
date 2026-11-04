@@ -13,7 +13,14 @@ dependencies = [
     "httpx>=0.27",
     "keyring>=25",
     "PySide6>=6.8",
+    "openwakeword>=0.6",
 ]
+
+[tool.uv]
+# openwakeword declares tflite-runtime (Linux-only) but wheels exist only for
+# cp38-cp311; scope it to python<3.12 so the universal lock resolves on 3.12+
+# (onnx inference_framework is the supported path elsewhere).
+override-dependencies = ["tflite-runtime; python_full_version < '3.12'"]
 
 [dependency-groups]
 dev = [
