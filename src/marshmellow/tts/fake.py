@@ -16,3 +16,6 @@ class FakeTTS:
     def stop(self) -> None:
         """Barge-in kill; the fake records the call so tests can assert it."""
         self.stop_calls += 1
+
+    def quit(self) -> None:
+        """Full teardown seam (PiperSpeaker terminates its subprocess); no-op here."""

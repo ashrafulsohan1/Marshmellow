@@ -193,6 +193,24 @@ async def test_voice_loop_is_the_app_loop(tmp_path: Path) -> None:
 
 
 @pytest.mark.scenario
+async def test_stop_shuts_down_the_loop_thread(tmp_path: Path) -> None:
+    """Regression: stop() must actually stop the resident loop (no 2s stall, no leak)."""
+    app = _app(tmp_path)
+    app.start()
+    loop = app.voice._loop
+    thread = app.voice._thread
+    assert loop is not None and thread is not None
+
+    began = time.monotonic()
+    app.stop()
+    elapsed = time.monotonic() - began
+
+    assert not thread.is_alive(), "the resident loop thread must not survive stop()"
+    assert loop.is_closed(), "the loop must be closed after stop()"
+    assert elapsed < 1.0, f"stop() must not stall on the join timeout (took {elapsed:.2f}s)"
+
+
+@pytest.mark.scenario
 async def test_speech_segment_flows_to_spoken_result(tmp_path: Path) -> None:
     pack = RecordingPack()
     app = _app(tmp_path, pack=pack)

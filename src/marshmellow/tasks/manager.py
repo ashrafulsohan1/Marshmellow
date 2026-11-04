@@ -3,14 +3,21 @@
 The planner runs on a worker thread (blocking work never touches a loop),
 every action passes through the executor seam (the future home of the safety
 gate), and the full TaskEvent trace lands on the EventBus. Running turns are
-tracked so the kill switch (M2 Task 8: "stop everything") can cancel them;
-a cancelled turn emits ``cancelled`` and never a result.
+tracked so the kill switch (M2 Task 8: "stop everything", §3.13) can cancel
+them; a cancelled turn emits ``cancelled`` and never a result. Cancellation
+also engages a per-task kill flag that the executor seam checks BEFORE every
+action: cancelling the coroutine alone cannot stop the planner worker thread
+(``asyncio.to_thread`` is not interruptible), so without the flag a mid-turn
+kill would keep executing real actions — the flag is what makes "aborts
+actions instantly" true. The one action already past the check may complete;
+everything after is refused.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -52,19 +59,25 @@ class TaskManager:
         self._planner = planner
         self._execute = execute
         self._running: dict[str, asyncio.Task[TaskHandle]] = {}
+        self._kills: dict[str, threading.Event] = {}
 
     async def submit(self, spec: TaskSpec) -> TaskHandle:
         handle = TaskHandle(spec=spec)
         current = asyncio.current_task()
+        kill = threading.Event()
         if current is not None:
             self._running[spec.id] = current
+        self._kills[spec.id] = kill
         self._emit(spec.id, "started", spec.instruction)
         try:
             result = await asyncio.to_thread(
-                self._planner.run, self._instruction(spec), self._executing(spec.id)
+                self._planner.run, self._instruction(spec), self._executing(spec.id, kill)
             )
         except asyncio.CancelledError:
             # Kill switch / barge-in: the turn dies quietly — no result, no failure.
+            # The flag makes the kill visible to the worker thread immediately, even
+            # if this coroutine has not processed the cancellation yet.
+            kill.set()
             logger.info("task %s cancelled", spec.id)
             self._emit(spec.id, "cancelled", spec.instruction)
             raise
@@ -77,6 +90,7 @@ class TaskManager:
             return handle
         finally:
             self._running.pop(spec.id, None)
+            self._kills.pop(spec.id, None)
         handle.result = result
         self._emit(spec.id, "result" if result.ok else "failed", result.summary_to_speak)
         return handle
@@ -87,10 +101,24 @@ class TaskManager:
         return asyncio.get_running_loop().create_task(self.submit(spec))
 
     def cancel_all(self) -> None:
-        """Kill switch: cancel every running turn (its coroutine re-raises CancelledError)."""
-        for task in list(self._running.values()):
+        """Kill switch (§3.13): cancel every running turn and stop its actions NOW."""
+        for task_id, task in list(self._running.items()):
+            kill = self._kills.get(task_id)
+            if kill is not None:
+                kill.set()  # before task.cancel(): visible to the worker thread instantly
             if not task.done():
                 task.cancel()
+
+    def cancel_task(self, task: asyncio.Task[TaskHandle]) -> None:
+        """Cancel one running turn (barge-in / cancel intent) with an instant kill."""
+        for task_id, running in list(self._running.items()):
+            if running is task:
+                kill = self._kills.get(task_id)
+                if kill is not None:
+                    kill.set()
+                if not task.done():
+                    task.cancel()
+                return
 
     @staticmethod
     def _instruction(spec: TaskSpec) -> Instruction:
@@ -100,8 +128,15 @@ class TaskManager:
             context=ContextSnapshot(),
         )
 
-    def _executing(self, task_id: str) -> Executor:
+    def _executing(self, task_id: str, kill: threading.Event) -> Executor:
         def run(req: ActionRequest) -> ActionResult:
+            if kill.is_set():
+                # The turn was killed: refuse instead of executing (and never emit
+                # a step event for an action that did not run).
+                return ActionResult(
+                    ok=False, observation="cancelled: kill switch engaged",
+                    error="cancelled",
+                )
             self._emit(task_id, "step", f"{req.kind}: {req.rationale}")
             return self._execute(req)
 

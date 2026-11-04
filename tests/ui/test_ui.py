@@ -70,3 +70,19 @@ def test_tray_menu_actions_publish(qapp: QApplication) -> None:
     tray.action("quit").trigger()
     assert _wait_for(lambda: kinds == ["mute", "quit"])
     bus.stop()
+
+
+def test_mascot_set_state_from_engine_thread_is_queued(qapp: QApplication) -> None:
+    """Engine threads (bus drain, voice loop) must never mutate the widget
+    directly: set_state lands on the GUI thread via a queued connection."""
+    import time
+
+    m = Mascot()
+    t = threading.Thread(target=lambda: m.set_state("acting"))
+    t.start()
+    t.join()
+
+    deadline = time.monotonic() + 5.0
+    while m.state != "acting" and time.monotonic() < deadline:
+        qapp.processEvents()
+    assert m.state == "acting"

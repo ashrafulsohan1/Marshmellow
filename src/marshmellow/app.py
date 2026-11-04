@@ -144,6 +144,7 @@ class App:
             self.hotkey_watcher.stop()
         if self.wake_watcher is not None:
             self.wake_watcher.stop()
+        self.tts.quit()  # full teardown (piper: terminate subprocess); stop() is only barge-in
         if self.mascot is not None:
             self.mascot.close()
         self.bus.stop()

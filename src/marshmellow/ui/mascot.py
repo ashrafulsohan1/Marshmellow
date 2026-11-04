@@ -3,6 +3,10 @@
 Placeholder art: a rounded marshmallow whose fill color encodes agent state
 (real art pipeline per OQ-3). Idle is click-through so it never blocks the
 screen; any active state accepts clicks (which publish MascotClicked).
+
+`set_state` is called from engine threads (bus drain, voice loop, task
+workers) — it emits a Qt signal that lands on the GUI thread via a queued
+connection, so no widget mutation ever happens off the Qt main thread.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
 
@@ -39,6 +43,8 @@ class MascotClicked(BaseModel):
 
 
 class Mascot(QWidget):
+    _state_requested = Signal(str)
+
     def __init__(self, bus: EventBus | None = None) -> None:
         super().__init__()
         self._bus = bus
@@ -51,15 +57,20 @@ class Mascot(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(64, 64)
         self._apply_click_through()
+        self._state_requested.connect(self._apply_state)  # queued from other threads
 
     @property
     def state(self) -> MascotState:
         return self._state
 
     def set_state(self, state: MascotState) -> None:
+        """Thread-safe: on the GUI thread this is direct, elsewhere queued."""
+        self._state_requested.emit(state)
+
+    def _apply_state(self, state: str) -> None:
         if state not in _STATE_COLORS:
             raise ValueError(f"unknown mascot state: {state!r}")
-        self._state = state
+        self._state = state  # type: ignore[assignment]
         self._apply_click_through()
         self.update()
 

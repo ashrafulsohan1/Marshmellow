@@ -92,6 +92,10 @@ class PiperSpeaker:
         self._stream: object | None = None  # sounddevice.OutputStream, lazy
         self._pending: list[tuple[int, int, SpeakRequest]] = []
         self._seq = 0
+        # Monotonic "the user asked for silence" counter (§3.9): a barge-in bumps
+        # it, and any utterance whose playback sees the counter move cuts itself
+        # off. The speaker and its subprocess stay alive for the next utterance.
+        self._silence_epoch = 0
         self._cv = threading.Condition()
         self._alive = False
         self._worker = threading.Thread(target=self._run, name="piper-worker", daemon=True)
@@ -104,6 +108,7 @@ class PiperSpeaker:
         with self._cv:
             if request.interrupt:
                 self._pending.clear()
+                self._silence_epoch += 1  # §3.9: interrupt=True cuts ongoing speech too
             self._seq += 1
             self._pending.append((_PRIORITY[request.priority], self._seq, request))
             self._cv.notify()
@@ -113,8 +118,20 @@ class PiperSpeaker:
             return [req.text for _, _, req in sorted(self._pending, key=lambda t: (t[0], t[1]))]
 
     def stop(self) -> None:
+        """Barge-in kill (§3.9): silence now, drop everything pending.
+
+        The worker and the piper subprocess stay alive — the next say() speaks
+        normally. Full teardown is `quit()`.
+        """
+        with self._cv:
+            self._pending.clear()
+            self._silence_epoch += 1
+
+    def quit(self) -> None:
+        """Full teardown: stop the worker and terminate the subprocess (no zombie)."""
         self._alive = False
         with self._cv:
+            self._silence_epoch += 1
             self._cv.notify()
         if self._worker.is_alive():
             self._worker.join(timeout=3.0)
@@ -135,11 +152,12 @@ class PiperSpeaker:
                         continue
                 self._pending.sort(key=lambda t: (t[0], t[1]))
                 _, _, request = self._pending.pop(0)
+                epoch = self._silence_epoch  # read atomically with the pop
             if not self._alive:
                 break
-            self._speak(request)
+            self._speak(request, epoch)
 
-    def _speak(self, request: SpeakRequest) -> None:
+    def _speak(self, request: SpeakRequest, epoch: int) -> None:
         assert self._proc is not None
         try:
             self._proc.stdin.write((request.text + "\n").encode("utf-8"))  # type: ignore[union-attr]
@@ -148,11 +166,21 @@ class PiperSpeaker:
             logger.exception("piper stdin write failed; dropping utterance")
             return
         self._bus.emit(SpeakingStarted())
+        cancelled = False
         try:
-            for chunk in _read_wav_stream(self._proc.stdout):  # type: ignore[arg-type]
-                if not self._alive:
+            stream = _read_wav_stream(self._proc.stdout)  # type: ignore[arg-type]
+            for chunk in stream:
+                with self._cv:
+                    cancelled = epoch != self._silence_epoch or not self._alive
+                if cancelled:
                     break
                 self._player(chunk)
+            if cancelled and self._alive:
+                # Drain the rest of this utterance unheard: piper keeps producing
+                # the WAV it was asked for, and skipping to its end keeps the
+                # stdout framing exact for the next utterance.
+                for _ in stream:
+                    pass
         except Exception:
             logger.exception("piper playback failed")
         finally:

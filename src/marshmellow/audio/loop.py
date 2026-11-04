@@ -106,27 +106,27 @@ class VoiceLoop:
         loop, thread = self._loop, self._thread
         self._loop = self._thread = None
         if loop is not None and thread is not None:
-            loop.call_soon_threadsafe(self._shutdown)
+            async def _finish() -> None:
+                # The loop's last coroutine, run ON the loop thread: kill the
+                # inflight turn, cancel leftover segment tasks, let them settle,
+                # then stop — never a cross-loop gather from the caller's thread.
+                self._stopping = True
+                self._cancel_inflight()
+                leftover = [t for t in self._seg_tasks if not t.done()]
+                for task in leftover:
+                    task.cancel()
+                if leftover:
+                    await asyncio.gather(*leftover, return_exceptions=True)
+                self._seg_tasks.clear()
+                loop.stop()
+
+            asyncio.run_coroutine_threadsafe(_finish(), loop)
             thread.join(timeout=2.0)
-            if not loop.is_running():
-                self._drain(loop)  # clean cancel of any leftover segment tasks
+            if thread.is_alive():
+                logger.error("voice loop thread survived stop(); loop leaked")
+            else:
                 loop.close()
         logger.info("voice loop stopped")
-
-    def _shutdown(self) -> None:
-        self._stopping = True
-        self._cancel_inflight()
-        assert self._loop is not None
-        self._loop.stop()
-
-    def _drain(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Last turn of the loop (caller's thread; it has stopped): cancel leftovers."""
-        leftover = [t for t in self._seg_tasks if not t.done()]
-        for task in leftover:
-            task.cancel()
-        if leftover:
-            loop.run_until_complete(asyncio.gather(*leftover, return_exceptions=True))
-        self._seg_tasks.clear()
 
     # -- bus handlers (synchronous; run on the emitting thread) -------------------
 
@@ -247,7 +247,9 @@ class VoiceLoop:
     def _cancel_inflight(self) -> None:
         task = self._inflight
         if task is not None and not task.done():
-            task.cancel()
+            # Through the manager so the executor kill flag engages synchronously —
+            # task.cancel() alone cannot stop the planner's worker thread.
+            self._app.manager.cancel_task(task)
 
     # -- small side-effect helpers -------------------------------------------------
 
