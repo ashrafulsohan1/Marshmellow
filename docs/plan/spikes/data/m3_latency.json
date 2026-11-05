@@ -1,0 +1,71 @@
+{
+  "generated": "2026-11-05T21:44:16.434066+00:00",
+  "machine_note": "user's Windows 11 desktop (the dev machine), CPU-only inference",
+  "git_head": "9f19116",
+  "reference_per_step": {
+    "ok": true,
+    "note": "scripted provider (0 ms RTT) \u2192 ENGINE-side per-step cost: dispatch + prompt build + tool execution (UIA settle-poll walk / gate / act) over the real stack, canned page. Cloud RTT is additive per step and unmeasured (no BYOK key stored \u2014 D7/OQ-2). Budget: per agent step \u2264 3 s (M2).",
+    "steps": [
+      {
+        "step": 1,
+        "tool": "get_elements",
+        "provider_dispatch_s": 0.0,
+        "step_wall_s": 0.0012,
+        "note": "\u2192 next provider call"
+      },
+      {
+        "step": 2,
+        "tool": "act",
+        "provider_dispatch_s": 0.0,
+        "step_wall_s": 0.0006,
+        "note": "\u2192 next provider call"
+      },
+      {
+        "step": 3,
+        "tool": "get_elements",
+        "provider_dispatch_s": 0.0,
+        "step_wall_s": 0.0005,
+        "note": "\u2192 next provider call"
+      },
+      {
+        "step": 4,
+        "tool": "finish",
+        "provider_dispatch_s": 0.0,
+        "step_wall_s": 0.0,
+        "note": "\u2192 task end"
+      }
+    ],
+    "planner_window_total_s": 0.0023,
+    "worst_step_s": 0.0012,
+    "worst_step_tool": "get_elements",
+    "budget_s": 3.0,
+    "worst_step_within_budget": true,
+    "spoken": "Your channel page shows 5 videos this week.",
+    "trace": [
+      "get_elements",
+      "act:uia_invoke",
+      "get_elements",
+      "finish"
+    ]
+  },
+  "settings_walk": {
+    "ok": true,
+    "note": "REAL ms-settings:about window, pinned on the 'system protection' hyperlink BEFORE walking (an unpinned settle-poll agrees on the pre-content empty frame \u2014 measured 0.04 s here before the fix). cold = invalidate + settle-poll (two agreeing walks); repeats = back-to-back reads \u2014 each spans several 0.1 s ticks, so they are new-tick re-walks, NOT cache hits (on slow apps the tick cache dedupes nothing across steps). SP1 corpus: Settings walks up to 7.5 s (vs Calculator 0.15 s). Read-only; the fixture closes its window. Settings must be closed before running (single-instance).",
+    "cold_walks_s": [
+      1.06,
+      1.042,
+      1.005
+    ],
+    "cold_median_s": 1.042,
+    "cold_worst_s": 1.06,
+    "element_count": 35,
+    "repeat_reads_s": [
+      0.8786,
+      0.8787,
+      0.936,
+      1.0225
+    ],
+    "budget_s": 3.0,
+    "cold_median_within_budget": true
+  }
+}

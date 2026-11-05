@@ -84,6 +84,45 @@ verify, safety gate L0–L3, UI test harness (02-Testing below).
 **DoD:** scenario suite covers 8+ apps incl. one vision-fallback case; L3 confirmation demonstrable; element-ref
 re-validation proven against window-move/focus-change races.
 
+**DoD evidence (2026-11-06, machine: the dev desktop):** full gate green
+(`uv run pytest -q`: **318 passed, 17 manual deselected** · `uv run pytest -m scenario`: **48 passed,
+287 deselected** · `uv run ruff check .` clean · `uv run mypy` strict clean, 29 source files) ·
+**scenario suite** = scripted runner (Task 6): `reference-check-channel` — the exact executed trace
+`get_elements → act:uia_invoke → get_elements → finish` with the spoken "5 videos this week";
+`vision-fallback` — the SoM path on the in-process fake provider, the "12,408 views" value existing
+nowhere but the vision reply; `l3-confirm-yes` / `l3-confirm-no` — same fixture/ref/kind, only the
+scripted answer differs: the gate asked, "no" refused and never acted — plus the fixture-app suite
+(Task 7): **8 real apps** (notepad, calculator, explorer, browser, settings, terminal, clock, paint)
+driven through real perception/ActionLayer/SafetyGate with UIA-tree assertions ·
+**element-ref re-validation vs the races:** window-move (`test_click_uses_revalidated_bbox_center_after_a_move`,
+`test_window_move_race_revalidates_to_new_bbox`) and focus-change
+(`test_revalidation_walks_the_elements_own_window_after_focus_change`; real-foreground
+`test_focus_change_race_types_into_original_notepad` under the `manual` marker) ·
+**L3 gate unit teeth:** confirm-yes executes / confirm-no refuses as an action result /
+silence-and-garbage never confirm, fail closed (`tests/safety/`).
+
+**Per-step latency FYI** (`tools/latency_m3.py` → [spikes/data/m3_latency.json](spikes/data/m3_latency.json),
+at HEAD `9f19116`, 2026-11-06): the scripted reference scenario through the real stack with a 0-RTT provider —
+all four steps ≤ **1.2 ms** engine-side (walk/gate/act/dispatch over the canned page), so the ≤ 3 s per-step
+budget is carried entirely by the cloud RTT, **unmeasured: no BYOK key stored on this machine** (verified via
+`secrets.load_api_key()`; the first BYOK call doubles as the SP5 probe, OQ-2). The burst risk is slow-app walks:
+a REAL `ms-settings:about` `get_elements` (settle-poll = two agreeing walks, 35 elements) measured **1.04 s
+median / 1.06 s worst** — within budget with ~2 s headroom — and back-to-back re-reads (~0.9 s each) are
+new-tick re-walks, so the `(hwnd, 0.1 s tick)` cache dedupes nothing across steps on slow apps. SP1's corpus
+measured Settings walks up to **7.5 s** (a settle-poll would then be ~15 s ≈ 5× budget): if that appears here,
+the tuning levers are the tick cache, `get_elements(query)` narrowing, `settle_deadline_s`, and SP1's
+query-scoped/lazy walk — a measured decision, not silently tuned. Bench lesson: walking Settings *without* the
+pin wait measures the pre-content empty frame agreeing with itself (0.04 s) — the fixture scenarios' `pin`
+exists for exactly this (SP1 finding 2).
+
+**Task 8 Step 2 — the assisted/manual E2E checklist — is the remaining user-physical step**
+→ [pending-user-verifications.md](pending-user-verifications.md) (BYOK live-cloud run; reference scenario
+assisted then hands-free; live L3 confirm no/yes/ambiguous; real vision fallback on a UIA-sparse surface;
+live kill switch).
+
+Commits `0ea6b9e…9f19116` (Tasks 1–7 in their own `feat:`/`fix:`/`test:` commits — see git log; Task 8 adds
+the bench + this evidence `docs:` commit).
+
 ### M4 — Background tasks (size: M)
 **Goal:** waiting-and-checking classes work and are managed from the dashboard.
 **Scope:** TaskManager classes, monitor framework (url_diff/api_field/file_hash/rss), scheduler, voice reporting,
