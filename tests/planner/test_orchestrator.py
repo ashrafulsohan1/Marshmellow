@@ -223,7 +223,7 @@ def test_max_steps_safety_cut() -> None:
     )
     execute, executed = _executor()
 
-    result = LLMPlanner(provider=llm).run(_instruction("open notepad"), execute)  # budget 12
+    result = LLMPlanner(provider=llm, max_steps=12).run(_instruction("open notepad"), execute)
 
     assert not result.ok
     assert result.summary_to_speak  # speaks a failure, never hangs
@@ -362,7 +362,8 @@ def test_finish_is_deferred_until_actions_are_observed() -> None:
 def test_system_prompt_is_versioned_and_wired() -> None:
     prompt = load_system_prompt()
     assert prompt.strip()
-    assert PROMPT_VERSION == "v1"
+    # M3 Task 5 bumped the orchestrator prompt to v2 (perceive/act/verify tools)
+    assert PROMPT_VERSION == "v2"
     for tool in sorted(M2_TOOL_NAMES):
         assert tool in prompt
 
