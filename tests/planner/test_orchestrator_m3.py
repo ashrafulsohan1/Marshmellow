@@ -13,6 +13,8 @@ fakes end to end (h).
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -666,6 +668,145 @@ def test_screen_toolbox_element_lines_are_token_cheap() -> None:
     assert perception.hints[-1] is None
 
 
+def test_screen_toolbox_never_lists_password_field_values() -> None:
+    """§3.13: no typed secrets ever logged/sent — the UIA reader DOES populate
+    Element.value for password fields (the Value pattern is available there),
+    so the listing must drop it while keeping the (password) marker."""
+    registry = ElementRegistry()
+    perception = FakeScreenPerception(
+        registry,
+        [
+            PerceptionSnapshot(
+                active_window=WindowInfo(hwnd=5, title="Sign in", app="TestApp"),
+                elements=[
+                    _element("e5", role="Edit", name="", x=10, y=10, w=200, h=24,
+                             actions=("read", "set_value"), value="hunter2",
+                             password=True),
+                ],
+            )
+        ],
+    )
+    toolbox = ScreenToolbox(perception, registry, _executor()[0])
+
+    listing = toolbox.get_elements(None)
+    lines = listing.splitlines()
+
+    assert "e5 Edit '' (10,10 200x24) [read,set_value] (password)" in lines
+    assert "hunter2" not in listing  # the secret never reaches the LLM or the trace
+    assert registry.resolve("e5") is not None
+
+
+class _SlowActToolbox(FakeToolbox):
+    """FakeToolbox whose act blocks like a real UIA walk / SendInput step."""
+
+    def __init__(self, delay_s: float) -> None:
+        super().__init__()
+        self._delay_s = delay_s
+
+    def act(self, req: ActionRequest) -> ActionResult:
+        time.sleep(self._delay_s)  # the blocking step — a stalled COM call, say
+        return ActionResult(ok=True, observation="invoked Button 'Play'")
+
+
+def test_blocking_step_cannot_stall_the_loop_or_the_timeout() -> None:
+    """Review Focus 5 through the composed loop: a blocking step must run OFF
+    the resident loop (asyncio.to_thread), or asyncio.wait_for could never cut
+    a hung walk/SendInput/ask and the whole loop would freeze. Before the fix
+    this test took the full blocking duration and returned ok."""
+    toolbox = _SlowActToolbox(delay_s=1.0)
+    llm = ScriptedLLM(
+        [
+            LLMResponse(
+                tool_calls=[_call("act", kind="uia_invoke", target_ref="e1", rationale="press")],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                tool_calls=[_call("finish", ok=True, summary_to_speak="Pressed.")],
+                stop_reason="tool_calls",
+            ),
+        ]
+    )
+
+    began = time.monotonic()
+    result = LLMPlanner(llm, toolbox=toolbox, timeout_s=0.2).run(
+        _instruction("press play"), _executor()[0]
+    )
+    elapsed = time.monotonic() - began
+
+    assert not result.ok
+    assert "too long" in result.summary_to_speak.lower()  # the timeout FIRED mid-step
+    assert elapsed < 0.9, f"timeout must not wait out the blocking step (took {elapsed:.2f}s)"
+
+
+def test_resident_loop_services_a_second_task_while_one_step_blocks() -> None:
+    """Review Focus 5, loop-liveness half: while task A is stuck inside its
+    blocking act, the SAME planner's resident loop must still complete task B
+    (pre-fix: B queued behind the frozen loop until A's step returned)."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _GatedToolbox(FakeToolbox):
+        def __init__(self) -> None:
+            super().__init__()
+            self.inside_act = False
+
+        def act(self, req: ActionRequest) -> ActionResult:
+            self.inside_act = True
+            entered.set()
+            release.wait(timeout=2.0)  # the blocking step; self-bounded
+            self.inside_act = False
+            return ActionResult(ok=True, observation="invoked Button 'Play'")
+
+    class _TwoTaskLLM:
+        """Routes by instruction: task A gets the act script, task B a reply."""
+
+        def __init__(self) -> None:
+            self.requests: list[LLMRequest] = []
+            self._press_rounds = 0
+
+        @property
+        def capabilities(self) -> ProviderCaps:
+            return ProviderCaps(vision=False, tool_call=True, json_schema=False)
+
+        async def complete(self, req: LLMRequest) -> LLMResponse:
+            self.requests.append(req)
+            if "press play" in req.messages[1].content:
+                self._press_rounds += 1
+                if self._press_rounds == 1:
+                    return LLMResponse(
+                        tool_calls=[
+                            _call("act", kind="uia_invoke", target_ref="e1", rationale="press")
+                        ],
+                        stop_reason="tool_calls",
+                    )
+                return LLMResponse(
+                    tool_calls=[_call("finish", ok=True, summary_to_speak="Pressed.")],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(text="Bonjour.", stop_reason="stop")
+
+    toolbox = _GatedToolbox()
+    planner = LLMPlanner(_TwoTaskLLM(), toolbox=toolbox, timeout_s=10.0)
+
+    worker = threading.Thread(
+        target=planner.run, args=(_instruction("press play"), _executor()[0])
+    )
+    worker.start()
+    assert entered.wait(timeout=2.0), "task A never reached its blocking act"
+
+    began = time.monotonic()  # task A is STILL blocked here
+    fast = planner.run(_instruction("hello"), _executor()[0])  # SAME planner/loop
+    elapsed = time.monotonic() - began
+
+    assert fast.ok
+    assert elapsed < 1.5, f"task B must run while A blocks (took {elapsed:.2f}s)"
+    assert toolbox.inside_act, "task B finished while task A's act was still inside"
+
+    release.set()  # let task A's step return
+    worker.join(timeout=5.0)
+    assert not worker.is_alive()
+
+
 # (h) App(headless=True) with injected fakes, end to end
 @pytest.mark.scenario
 async def test_app_headless_composition_with_injected_fakes(tmp_path: Path) -> None:
@@ -730,5 +871,24 @@ async def test_app_headless_composition_with_injected_fakes(tmp_path: Path) -> N
         assert gate.guarded and gate.guarded[0].kind == "type_text"  # acts pass the gate
         spoken = [s.text for s in app.tts.spoken]
         assert any("typed hello" in t.lower() for t in spoken)  # FakeTTS spoke the result
+    finally:
+        app.stop()
+
+
+def test_app_confirm_fallback_is_marshaled_and_absent_headless(tmp_path: Path) -> None:
+    """§3.13 fallback wiring: headless has NO fallback (fail closed); a GUI run
+    must marshal confirm_dialog to the GUI thread, never call it cross-thread."""
+    from PySide6.QtWidgets import QApplication
+
+    from marshmellow.ui.tray import GuiMarshaledConfirm
+
+    _ = QApplication.instance() or QApplication([])  # offscreen
+    app = App(Settings(), headless=True, log_dir=tmp_path, pack=RecordingPack())
+    try:
+        assert app._confirm_fallback() is None
+
+        app.headless = False
+        fallback = app._confirm_fallback()
+        assert isinstance(fallback, GuiMarshaledConfirm)
     finally:
         app.stop()

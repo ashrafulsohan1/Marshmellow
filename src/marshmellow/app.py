@@ -59,7 +59,7 @@ from marshmellow.planner.tools import ScreenToolbox
 from marshmellow.stt.fake import FakeSTT
 from marshmellow.tasks.manager import Planner, TaskHandle, TaskManager
 from marshmellow.tts.fake import FakeTTS
-from marshmellow.ui.tray import TrayAction, confirm_dialog
+from marshmellow.ui.tray import GuiMarshaledConfirm, TrayAction
 
 if TYPE_CHECKING:
     from marshmellow.tts.piper import PiperSpeaker
@@ -291,12 +291,7 @@ class App:
         from marshmellow.safety.gate import SafetyGate
         from marshmellow.safety.policy import RiskPolicy
 
-        confirm = ConfirmFlow(
-            ask=self.ask_channel.ask,
-            # the tray dialog needs a Qt app; headless runs fail closed on
-            # ambiguous voice instead of popping a modal no one can see
-            fallback=None if self.headless else confirm_dialog,
-        )
+        confirm = ConfirmFlow(ask=self.ask_channel.ask, fallback=self._confirm_fallback())
         return SafetyGate(
             policy=RiskPolicy(
                 preset=self.settings.safety.preset,
@@ -307,6 +302,17 @@ class App:
             kill_probe=self._kill_engaged,
             resolve=self._resolve_element,
         )
+
+    def _confirm_fallback(self) -> Callable[[str], bool] | None:
+        """The §3.13 tray-dialog fallback — or None headless (fail closed instead).
+
+        The QMessageBox must be created and exec()'d on the GUI thread while the
+        gate calls the fallback from a planner worker thread: composition wraps
+        ``confirm_dialog`` in the GUI-thread marshal. Headless runs have no GUI
+        thread at all, so there is no fallback and ambiguity refuses."""
+        if self.headless:
+            return None
+        return GuiMarshaledConfirm()
 
     def _build_planner(self, settings: Settings) -> Planner:
         """D7: the provider setting picks the planner behind TaskManager.

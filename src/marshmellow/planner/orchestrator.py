@@ -9,6 +9,14 @@ provider's pooled HTTP client is bound to the loop it first runs on, so a
 fresh loop per call would intermittently fail with
 ``RuntimeError('Event loop is closed')`` on the second task.
 
+Thread discipline (Review Focus 5): executor and toolbox steps are BLOCKING
+(UIA walks, pattern calls, SendInput, the 20-40 s spoken ask channel) — each
+one is marshaled off the resident loop with ``asyncio.to_thread``, so a slow
+walk can neither stall the loop (a queued second task still runs) nor stop
+``asyncio.wait_for`` from cutting the task at the timeout. The composition
+(``App._execute`` → gate → ActionLayer) is written for exactly that calling
+thread; never call ``_execute_tool`` inline on the loop.
+
 M2 tool set: ``open_app`` · ``wait`` · ``ask_user`` · ``finish`` — offered as
 JSON-schema function specs and mapped onto the executor seam as
 ``ActionRequest``s. With a ``toolbox`` (``planner.tools.PlannerTools``) the M3
@@ -388,7 +396,11 @@ class LLMPlanner:
                 if call.name == _FINISH:
                     pending_finish = call
                     continue
-                result = self._execute_tool(call, execute)
+                # Every executor/toolbox step is BLOCKING (UIA walks, SendInput,
+                # the spoken ask channel): it runs on a worker thread via
+                # asyncio.to_thread — never on this resident loop (Review Focus
+                # 5) — so the wall-clock timeout below can always fire.
+                result = await asyncio.to_thread(self._execute_tool, call, execute)
                 trace.append(f"{call.name}: {result.observation}")
                 messages.append(self._observation_message(call, result))
                 if verify.observe(self._acted_ref(call), result):

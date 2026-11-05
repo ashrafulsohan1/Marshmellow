@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
@@ -71,3 +72,40 @@ def confirm_dialog(question: str) -> bool:
     # exec() returns the StandardButton value (Yes on accept; 0 on Escape/reject) —
     # compare the numeric value so offscreen tests that done() the dialog also work.
     return box.exec() == int(QMessageBox.StandardButton.Yes)
+
+
+class GuiMarshaledConfirm(QObject):
+    """Composition's GUI-thread marshal for the tray confirm fallback (§3.13).
+
+    ``confirm_dialog`` must run on the GUI thread (QMessageBox creation and
+    exec()); the safety gate calls its fallback from a planner worker thread.
+    This marshal re-emits the request over a BlockingQueuedConnection: the
+    calling worker blocks until the GUI thread has shown and answered the
+    dialog. Called on the GUI thread itself it degrades to a direct call (a
+    same-thread blocking-queued emit would deadlock).
+
+    Known limit (documented M2 behavior): the calling thread waits for the
+    user's answer, so a kill during the dialog is applied AFTER it returns —
+    the gate re-checks the kill probe post-confirmation and refuses; the
+    dialog itself stays fail-closed (No / Escape).
+    """
+
+    _requested = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._result = False
+        self._requested.connect(self._show, Qt.ConnectionType.BlockingQueuedConnection)
+
+    def __call__(self, question: str) -> bool:
+        if QThread.currentThread() is self.thread():  # already the GUI thread
+            return self._show(question)
+        # Blocks the calling worker until _show() has stored the answer on the
+        # GUI thread — the blocking emit is the ordering, no lock needed (a lock
+        # held across emit would deadlock _show on the GUI thread).
+        self._requested.emit(question)
+        return self._result
+
+    def _show(self, question: str) -> bool:
+        self._result = confirm_dialog(question)
+        return self._result

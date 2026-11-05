@@ -67,11 +67,15 @@ def _line(element: Element) -> str:
         f"{element.ref} {element.role} '{element.name}' "
         f"({bbox.x},{bbox.y} {bbox.w}x{bbox.h}) [{actions}]"
     )
-    if element.value is not None:
+    if element.value is not None and not element.password:
         text += f" value={element.value!r}"
     if not element.enabled:
         text += " (disabled)"
-    if element.password:  # the value of a password field is never included
+    # §3.13: no typed secrets ever logged — the marker MUST stay the only trace
+    # of a password field: the UIA reader populates Element.value whenever the
+    # Value pattern is available (password edits carry it), so the value exists
+    # on the element but is never rendered into the planner-facing listing.
+    if element.password:
         text += " (password)"
     return text
 
