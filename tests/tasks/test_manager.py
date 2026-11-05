@@ -18,8 +18,17 @@ from marshmellow.core.contracts import (
     TaskSpec,
 )
 from marshmellow.planner.fake import FakePlanner
+from marshmellow.tasks.foreground import ForegroundLease
 from marshmellow.tasks.manager import BACKGROUND_MODES, Executor, TaskManager
 from marshmellow.tasks.monitors import CheckResult, MonitorCheck
+
+
+class GrantedConfirmer:
+    """D6 consent stub: the user always says yes (the lease ask itself is
+    covered in test_foreground_lease.py)."""
+
+    def confirm(self, question: str) -> bool:
+        return True
 
 
 def _manager(bus: EventBus, executed: list[ActionRequest], ok: bool = True) -> TaskManager:
@@ -233,6 +242,7 @@ def _background_manager(
     checks: dict[str, ScriptedCheck],
     clock: FakeClock,
     sleeper: RecordingSleeper,
+    lease: ForegroundLease | None = None,
 ) -> TaskManager:
     """Full seam set: FakeClock, recording sleeper, scripted checks, fixed rng=0.0."""
 
@@ -251,6 +261,7 @@ def _background_manager(
         rng=lambda: 0.0,
         sleeper=sleeper,
         check_factory=factory,
+        lease=lease,
     )
 
 
@@ -482,7 +493,13 @@ async def test_scheduled_task_runs_at_due_time() -> None:
     executed: list[ActionRequest] = []
     clock = FakeClock()
     sleeper = RecordingSleeper(clock)
-    manager = _background_manager(bus, executed, {}, clock, sleeper)
+    # D6 (§3.12): a scheduled action touches the screen only through a granted
+    # foreground lease — consent is granted here; the ask/refusal flow itself
+    # is covered in test_foreground_lease.py.
+    manager = _background_manager(
+        bus, executed, {}, clock, sleeper,
+        lease=ForegroundLease(bus=bus, confirm=GrantedConfirmer()),
+    )
 
     schedule = clock() + timedelta(seconds=90)
     handle = manager.register(
@@ -496,7 +513,9 @@ async def test_scheduled_task_runs_at_due_time() -> None:
     assert handle.result.summary_to_speak == "Opened notepad."
     assert handle.next_due == schedule
     assert executed and executed[0].payload["open_app"] == "notepad"
-    assert [e.type for e in events if e.task_id == "s1"] == ["started", "step", "result"]
+    assert [e.type for e in events if e.task_id == "s1"] == [
+        "started", "lease_request", "step", "result",
+    ]
     manager.stop()
     bus.stop()
 

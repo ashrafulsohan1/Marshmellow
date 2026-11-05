@@ -7,6 +7,8 @@ screen; any active state accepts clicks (which publish MascotClicked).
 `set_state` is called from engine threads (bus drain, voice loop, task
 workers) — it emits a Qt signal that lands on the GUI thread via a queued
 connection, so no widget mutation ever happens off the Qt main thread.
+"attention" is the §3.12 D6 foreground-lease ask: a background task wants the
+screen and is waiting for the user's consent.
 """
 
 from __future__ import annotations
@@ -21,10 +23,10 @@ from PySide6.QtWidgets import QWidget
 from marshmellow.core.bus import EventBus
 
 MascotState = Literal[
-    "idle", "listening", "thinking", "acting", "speaking", "error", "muted"
+    "idle", "listening", "thinking", "acting", "speaking", "error", "muted", "attention"
 ]
 MASCOT_STATES: tuple[MascotState, ...] = (
-    "idle", "listening", "thinking", "acting", "speaking", "error", "muted",
+    "idle", "listening", "thinking", "acting", "speaking", "error", "muted", "attention",
 )
 
 _STATE_COLORS: dict[MascotState, str] = {
@@ -35,6 +37,7 @@ _STATE_COLORS: dict[MascotState, str] = {
     "speaking": "#9fe8b8",
     "error": "#ff8f8f",
     "muted": "#9a9a9a",
+    "attention": "#f6a5c0",  # foreground-lease ask (§3.12 D6): consent wanted
 }
 
 

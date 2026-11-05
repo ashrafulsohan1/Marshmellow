@@ -13,7 +13,12 @@ from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from marshmellow.core.bus import EventBus  # noqa: E402
 from marshmellow.ui import tray as tray_module  # noqa: E402
-from marshmellow.ui.mascot import MASCOT_STATES, Mascot, MascotClicked  # noqa: E402
+from marshmellow.ui.mascot import (  # noqa: E402
+    _STATE_COLORS,
+    MASCOT_STATES,
+    Mascot,
+    MascotClicked,
+)
 from marshmellow.ui.tray import (  # noqa: E402
     GuiMarshaledConfirm,
     Tray,
@@ -39,6 +44,17 @@ def test_mascot_idle_is_click_through(qapp: QApplication) -> None:
     m.set_state("idle")
     assert bool(m.windowFlags() & Qt.WindowType.WindowTransparentForInput)
     m.set_state("listening")
+    assert not bool(m.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+
+
+def test_mascot_attention_state_is_the_foreground_lease_ask(qapp: QApplication) -> None:
+    """D6 (§3.12): a background task asking for the screen shows "attention"
+    (#f6a5c0) while the consent question is up — an active (clickable) state."""
+    assert "attention" in MASCOT_STATES
+    assert _STATE_COLORS["attention"] == "#f6a5c0"
+    m = Mascot()
+    m.set_state("attention")
+    assert m.state == "attention"
     assert not bool(m.windowFlags() & Qt.WindowType.WindowTransparentForInput)
 
 

@@ -14,6 +14,9 @@ is injectable (`perception=`, `action_layer=`, `gate=`, `ask_channel=`,
 spoken ask channel, `shell`+open_app → the DE pack, everything else →
 `gate.guard(action_layer.execute)`. The planner's toolbox (planner.tools.
 ScreenToolbox) wraps perception + registry + that same executor seam.
+M4: the TaskManager carries the D6 foreground lease (`self.lease`, same
+fail-closed ConfirmFlow as the gate), so background modes must win spoken
+consent before any non-read action reaches the executor.
 """
 
 from __future__ import annotations
@@ -62,6 +65,8 @@ from marshmellow.tts.fake import FakeTTS
 from marshmellow.ui.tray import GuiMarshaledConfirm, TrayAction
 
 if TYPE_CHECKING:
+    from marshmellow.safety.confirm import ConfirmFlow
+    from marshmellow.tasks.foreground import ForegroundLease
     from marshmellow.tts.piper import PiperSpeaker
     from marshmellow.ui.mascot import Mascot
     from marshmellow.ui.tray import Tray
@@ -175,8 +180,9 @@ class App:
         self._gated_execute = self.gate.guard(self._run_action_layer)
         self.toolbox = ScreenToolbox(self.perception, self.registry, self._execute)
         self.planner = planner if planner is not None else self._build_planner(settings)
+        self.lease = self._build_lease()  # D6: consented screen access (§3.12)
         self.manager = TaskManager(
-            bus=self.bus, planner=self.planner, execute=self._execute
+            bus=self.bus, planner=self.planner, execute=self._execute, lease=self.lease
         )
         self.audio_engine: AudioEngine | None = audio_engine
         if self.audio_engine is None and not headless:
@@ -287,22 +293,39 @@ class App:
             focus_window=self._focus_hwnd,
         )
 
+    def _build_confirm(self) -> ConfirmFlow:
+        """The §3.13 spoken yes/no loop, shared by the L3 gate and the D6 lease."""
+        from marshmellow.safety.confirm import ConfirmFlow
+
+        return ConfirmFlow(ask=self.ask_channel.ask, fallback=self._confirm_fallback())
+
     def _build_gate(self) -> GateLike:
         """Real SafetyGate: authoritative classification + fail-closed confirm (§3.13)."""
-        from marshmellow.safety.confirm import ConfirmFlow
         from marshmellow.safety.gate import SafetyGate
         from marshmellow.safety.policy import RiskPolicy
 
-        confirm = ConfirmFlow(ask=self.ask_channel.ask, fallback=self._confirm_fallback())
         return SafetyGate(
             policy=RiskPolicy(
                 preset=self.settings.safety.preset,
                 overrides=dict(self.settings.safety.overrides),
             ),
-            confirm=confirm,
+            confirm=self._build_confirm(),
             announce=self._announce,
             kill_probe=self._kill_engaged,
             resolve=self._resolve_element,
+        )
+
+    def _build_lease(self) -> ForegroundLease:
+        """D6 (§3.12): the foreground lease behind every background-mode screen action.
+
+        The confirmer is the same fail-closed ConfirmFlow as the L3 gate —
+        spoken yes/no with the tray fallback in GUI mode; headless has no
+        fallback, so ambiguity refuses. Refusals never reach the executor
+        (the lease is enforced in the TaskManager seam, before the gate)."""
+        from marshmellow.tasks.foreground import ForegroundLease
+
+        return ForegroundLease(
+            bus=self.bus, confirm=self._build_confirm(), mascot=self.mascot
         )
 
     def _confirm_fallback(self) -> Callable[[str], bool] | None:

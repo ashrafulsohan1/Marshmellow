@@ -24,6 +24,12 @@ Monitors never emit ``step`` (no executor actions) — their trace is
 loop via ``run_coroutine_threadsafe`` because they are called from planner
 worker threads and the GUI thread; ``cancel_all`` reaches the long-lived loops
 too, so "stop everything" stops monitors (§3.13).
+
+M4 T3 adds the §3.12 D6 foreground lease: the per-turn executor seam
+(``_executing``) requires a granted ``ForegroundLease`` before a background
+mode's non-read action reaches the executor (and its safety gate); a refusal
+is an ``ActionResult(ok=False, error="lease_denied"/"lease_required")`` and
+the lease is released in the turn's ``finally``.
 """
 
 from __future__ import annotations
@@ -54,6 +60,7 @@ from marshmellow.core.contracts import (
     TaskState,
     Transcript,
 )
+from marshmellow.tasks.foreground import READ_KINDS, ForegroundLease
 from marshmellow.tasks.monitors import MonitorCheck, make_check
 from marshmellow.tasks.scheduler import is_due, next_due
 
@@ -105,6 +112,7 @@ class TaskManager:
         rng: Callable[[], float] = random.random,
         sleeper: Callable[[float], Awaitable[None]] | None = None,  # default asyncio.sleep
         check_factory: Callable[[MonitorSpec], MonitorCheck] = make_check,
+        lease: ForegroundLease | None = None,  # D6: consented screen access (§3.12)
     ) -> None:
         self._bus = bus
         self._planner = planner
@@ -115,6 +123,7 @@ class TaskManager:
             sleeper if sleeper is not None else _default_sleep
         )
         self._check_factory = check_factory
+        self._lease = lease
         self._running: dict[str, asyncio.Task[TaskHandle]] = {}
         self._kills: dict[str, threading.Event] = {}
         self._current_id: str | None = None  # the most recently started turn
@@ -375,7 +384,7 @@ class TaskManager:
         self._emit(spec.id, "started", spec.instruction)
         try:
             result = await asyncio.to_thread(
-                self._planner.run, self._instruction(spec), self._executing(spec.id, kill)
+                self._planner.run, self._instruction(spec), self._executing(spec, kill)
             )
         except asyncio.CancelledError:
             # Kill switch / barge-in: the turn dies quietly — no result, no failure.
@@ -396,6 +405,9 @@ class TaskManager:
             handle.state = "failed"
             return
         finally:
+            if self._lease is not None:
+                # D6: the turn is over — the screen goes back, granted or not.
+                self._lease.release(spec.id)
             self._running.pop(spec.id, None)
             self._kills.pop(spec.id, None)
             if self._current_id == spec.id:
@@ -453,8 +465,13 @@ class TaskManager:
             context=ContextSnapshot(),
         )
 
-    def _executing(self, task_id: str, kill: threading.Event) -> Executor:
+    def _executing(self, spec: TaskSpec, kill: threading.Event) -> Executor:
+        task_id = spec.id
+        background = spec.mode in BACKGROUND_MODES
+        lease_denied = False  # one consent attempt per turn: a refusal is final here
+
         def run(req: ActionRequest) -> ActionResult:
+            nonlocal lease_denied
             if kill.is_set():
                 # The turn was killed: refuse instead of executing (and never emit
                 # a step event for an action that did not run).
@@ -462,6 +479,36 @@ class TaskManager:
                     ok=False, observation="cancelled: kill switch engaged",
                     error="cancelled",
                 )
+            if background and req.kind not in READ_KINDS:
+                # D6 (§3.12): "No silent UI takeover. Ever." — a background mode
+                # touches the screen only through a granted foreground lease.
+                # Raised HERE, before the executor seam: the safety gate still
+                # sees every granted request; a refusal never runs an action.
+                if self._lease is None:
+                    return ActionResult(
+                        ok=False,
+                        observation=(
+                            f"refused: {spec.mode} may not touch the screen "
+                            "without a foreground lease"
+                        ),
+                        error="lease_required",
+                    )
+                if self._lease.held_by() != task_id:
+                    if lease_denied:
+                        return ActionResult(
+                            ok=False,
+                            observation="refused: the foreground lease was denied "
+                            "for this turn",
+                            error="lease_denied",
+                        )
+                    if not self._lease.request(task_id, req.rationale):
+                        lease_denied = True
+                        return ActionResult(
+                            ok=False,
+                            observation="refused: the user did not grant the "
+                            "foreground lease",
+                            error="lease_denied",
+                        )
             self._emit(task_id, "step", f"{req.kind}: {req.rationale}")
             return self._execute(req)
 
@@ -528,7 +575,8 @@ class TaskManager:
             raise
 
     async def _job_loop(self, handle: TaskHandle) -> None:
-        """A background job runs its one long turn immediately (lease arrives with M4 T3)."""
+        """A background job runs its one long turn immediately; its screen
+        access is foreground-lease gated (§3.12 D6, enforced in _executing)."""
         try:
             await self._run_planner_turn(handle)
         except asyncio.CancelledError:
