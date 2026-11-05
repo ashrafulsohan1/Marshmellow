@@ -605,6 +605,16 @@ def test_screenshot_artifacts_purged_at_task_end(tmp_path: Path) -> None:
 
 
 def test_screenshot_artifacts_purged_on_timeout(tmp_path: Path) -> None:
+    """§3.15 on the timeout path: the finally purge ran anyway.
+
+    Deterministic by construction: provider call 1 replies immediately, call 2
+    unblocks only AFTER the first tool step completed (so its artifact is
+    remembered), then hangs — the wall-clock cut lands on a plain provider
+    await, never mid-tool-step. (The previous 0.02 s-delay / 0.05 s-timeout
+    build was a pure load race: on a loaded machine the to_thread hop alone
+    exceeded the ~30 ms left after call 1, the cut fired with zero completed
+    steps, and the purge legitimately had nothing to delete.)
+    """
     shot = tmp_path / "shot.png"
     shot.write_bytes(b"png")
     registry = ElementRegistry()
@@ -616,18 +626,46 @@ def test_screenshot_artifacts_purged_on_timeout(tmp_path: Path) -> None:
             )
         ],
     )
-    toolbox = ScreenToolbox(perception, registry, _executor()[0])
-    llm = ScriptedLLM(
-        [LLMResponse(tool_calls=[_call("get_elements")], stop_reason="tool_calls")],
-        repeat_last=True,
-        delay=0.02,
-    )
+    step_done = threading.Event()
 
-    result = LLMPlanner(llm, toolbox=toolbox, timeout_s=0.05).run(
+    class SignallingToolbox(ScreenToolbox):
+        def get_elements(self, query: str | None = None) -> str:
+            listing = super().get_elements(query)  # _remember happened inside
+            step_done.set()
+            return listing
+
+    toolbox = SignallingToolbox(perception, registry, _executor()[0])
+
+    class HangAfterFirstResponse:
+        def __init__(self) -> None:
+            self.requests: list[LLMRequest] = []
+            self._replied = False
+
+        @property
+        def capabilities(self) -> ProviderCaps:
+            return ProviderCaps(vision=False, tool_call=True, json_schema=False)
+
+        async def complete(self, req: LLMRequest) -> LLMResponse:
+            self.requests.append(req)
+            if not self._replied:
+                self._replied = True
+                return LLMResponse(
+                    tool_calls=[_call("get_elements")], stop_reason="tool_calls"
+                )
+            # Ordered after step 1 by the tool loop itself; block here so the
+            # cut fires on this await with no tool step in flight.
+            await asyncio.to_thread(step_done.wait, 5.0)
+            await asyncio.sleep(30.0)
+            raise AssertionError("unreachable — the wall-clock cut must fire first")
+
+    llm = HangAfterFirstResponse()
+
+    result = LLMPlanner(llm, toolbox=toolbox, timeout_s=0.5).run(
         _instruction("look"), _executor()[0]
     )
 
     assert not result.ok  # wall-clock cut
+    assert step_done.is_set()  # the artifact was remembered before the cut
     assert not shot.exists()  # the finally purge ran anyway
 
 
