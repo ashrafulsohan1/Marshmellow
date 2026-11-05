@@ -60,6 +60,21 @@ class TaskManager:
         self._execute = execute
         self._running: dict[str, asyncio.Task[TaskHandle]] = {}
         self._kills: dict[str, threading.Event] = {}
+        self._current_id: str | None = None  # the most recently started turn
+
+    def current_kill(self) -> threading.Event | None:
+        """The ACTIVE turn's kill event (None when no turn is running).
+
+        The §3.13 ask channel waits on this during an L3 confirmation: a kill
+        during a 20 s spoken question must abort the ask within ~250 ms, and
+        ``asyncio.to_thread`` is not interruptible — the event is the fast
+        channel. M2's pre-action kill check in the executor seam remains the
+        second net. With concurrent turns this is the most recent one (the
+        voice loop runs a single turn).
+        """
+        if self._current_id is None:
+            return None
+        return self._kills.get(self._current_id)
 
     async def submit(self, spec: TaskSpec) -> TaskHandle:
         handle = TaskHandle(spec=spec)
@@ -68,6 +83,7 @@ class TaskManager:
         if current is not None:
             self._running[spec.id] = current
         self._kills[spec.id] = kill
+        self._current_id = spec.id
         self._emit(spec.id, "started", spec.instruction)
         try:
             result = await asyncio.to_thread(
@@ -91,6 +107,8 @@ class TaskManager:
         finally:
             self._running.pop(spec.id, None)
             self._kills.pop(spec.id, None)
+            if self._current_id == spec.id:
+                self._current_id = None  # no active turn → current_kill() is None again
         handle.result = result
         self._emit(spec.id, "result" if result.ok else "failed", result.summary_to_speak)
         return handle

@@ -1,5 +1,6 @@
 
 import asyncio
+import threading
 import time
 
 from marshmellow.core.bus import EventBus
@@ -125,4 +126,48 @@ async def test_cancel_all_stops_in_flight_actions() -> None:
     assert "step" not in trace[trace.index("cancelled") + 1:], (
         "no step events may follow the cancelled event"
     )
+    bus.stop()
+
+
+async def test_current_kill_exposes_the_active_turns_kill_event() -> None:
+    """Task 4 (§3.13 ask channel): the L3 confirmation wait needs the active
+    turn's kill event so a kill during a 20 s ask aborts within ~250 ms."""
+    bus = EventBus()
+
+    class BlockingPlanner:
+        def __init__(self) -> None:
+            self.seen_kill: threading.Event | None = None
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def run(self, instruction: Instruction, execute: Executor) -> TaskResult:
+            self.seen_kill = manager.current_kill()
+            self.started.set()
+            self.release.wait(timeout=5.0)
+            return TaskResult(ok=True, summary_to_speak="done")
+
+    planner = BlockingPlanner()
+    manager = TaskManager(
+        bus=bus,
+        planner=planner,
+        execute=lambda req: ActionResult(ok=True, observation="did it"),
+    )
+    assert manager.current_kill() is None, "no active turn → no kill event"
+
+    task = manager.submit_text_background("wait a moment")
+    # Let the loop start the turn (blocking .wait() here would starve it): poll
+    # with awaits until the planner is running, condition-bounded, never a sleep.
+    deadline = time.monotonic() + 5.0
+    while not planner.started.is_set() and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    assert planner.started.is_set(), "the turn must be running before the kill"
+    kill = manager.current_kill()
+    assert kill is not None and kill is planner.seen_kill, "the turn's own kill event"
+
+    manager.cancel_all()  # the kill switch sets the active turn's kill synchronously
+    assert kill.is_set()
+    planner.release.set()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert manager.current_kill() is None, "turn over → no active kill event"
     bus.stop()

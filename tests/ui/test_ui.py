@@ -6,13 +6,13 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import Qt, QTimer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from marshmellow.core.bus import EventBus  # noqa: E402
 from marshmellow.ui.mascot import MASCOT_STATES, Mascot, MascotClicked  # noqa: E402
-from marshmellow.ui.tray import Tray, TrayAction  # noqa: E402
+from marshmellow.ui.tray import Tray, TrayAction, confirm_dialog  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -86,3 +86,46 @@ def test_mascot_set_state_from_engine_thread_is_queued(qapp: QApplication) -> No
     while m.state != "acting" and time.monotonic() < deadline:
         qapp.processEvents()
     assert m.state == "acting"
+
+
+def _close_modal_later(button: QMessageBox.StandardButton, timeout_ms: int = 2000) -> None:
+    """Answer the next active modal dialog with `button` via the Qt event loop
+    (no threads, no fixed sleeps: a QTimer polls until the dialog is up).
+    Parented to the app so the timer survives the local scope while exec() runs."""
+    timer = QTimer(QApplication.instance())
+
+    def try_close() -> None:
+        widget = QApplication.activeModalWidget()
+        if widget is not None:
+            widget.done(int(button))
+            timer.stop()
+
+    timer.timeout.connect(try_close)
+    timer.start(10)
+    QTimer.singleShot(timeout_ms, timer.stop)
+
+
+def test_confirm_dialog_accept_returns_true(qapp: QApplication) -> None:
+    _close_modal_later(QMessageBox.StandardButton.Yes)
+    assert confirm_dialog("Delete 6 items — confirm?") is True
+
+
+def test_confirm_dialog_dismiss_returns_false(qapp: QApplication) -> None:
+    _close_modal_later(QMessageBox.StandardButton.No)
+    assert confirm_dialog("Delete 6 items — confirm?") is False
+
+
+def test_confirm_dialog_default_button_is_no(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§3.13 fail closed: the dialog's default must be No (Enter dismisses)."""
+    defaults: list[str] = []
+
+    def capture_exec(self: QMessageBox) -> int:
+        button = self.defaultButton()
+        defaults.append(button.text() if button is not None else "")
+        return int(QMessageBox.StandardButton.No)
+
+    monkeypatch.setattr(QMessageBox, "exec", capture_exec)
+    assert confirm_dialog("Delete 6 items — confirm?") is False
+    assert defaults == ["&No"]

@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from marshmellow.core.bus import EventBus
 
@@ -52,3 +52,22 @@ class Tray:
 
     def show(self) -> None:
         self._icon.show()
+
+
+def confirm_dialog(question: str) -> bool:
+    """§3.13 tray fallback when voice confirmation is ambiguous: a blocking
+    yes/no QMessageBox. Must run on the GUI thread (composition marshals it
+    there). Defaults to No and Escape dismisses — fail closed either way.
+    Offscreen-testable (QT_QPA_PLATFORM=offscreen, see tests/conftest.py)."""
+    if QApplication.instance() is None:  # offscreen tests may not have one yet
+        QApplication([])
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle("Marshmellow")
+    box.setText(question)
+    box.addButton(QMessageBox.StandardButton.Yes)
+    box.addButton(QMessageBox.StandardButton.No)
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    # exec() returns the StandardButton value (Yes on accept; 0 on Escape/reject) —
+    # compare the numeric value so offscreen tests that done() the dialog also work.
+    return box.exec() == int(QMessageBox.StandardButton.Yes)

@@ -16,7 +16,7 @@ from typing import Literal
 import tomli_w
 from pydantic import BaseModel, Field
 
-from marshmellow.core.contracts import ActivationMode
+from marshmellow.core.contracts import ActivationMode, RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,10 @@ class ProvidersConfig(BaseModel):
 
 class SafetyConfig(BaseModel):
     preset: Literal["relaxed", "standard", "strict"] = "standard"
+    # Per-kind risk overrides ([safety].overrides, keyed by ActionKind).
+    # RiskPolicy applies them as max(table_level, override): they may only
+    # escalate — the L3 floor is never lowered (§3.13).
+    overrides: dict[str, RiskLevel] = Field(default_factory=dict)
 
 
 class UIConfig(BaseModel):

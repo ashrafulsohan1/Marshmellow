@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from marshmellow.core import config as config_mod
-from marshmellow.core.config import Settings, default_config_path, load_settings
+from marshmellow.core.config import SafetyConfig, Settings, default_config_path, load_settings
 
 
 def test_defaults_when_file_missing(tmp_path: Path) -> None:
@@ -11,9 +12,25 @@ def test_defaults_when_file_missing(tmp_path: Path) -> None:
     assert s.activation == "both"
     assert s.autostart is False
     assert s.providers.llm.kind == "fake"
-    assert s.safety.preset == "standard"
+    assert s.safety == SafetyConfig()  # standard preset, no overrides
     assert s.stt_model == "base"  # M0-SP2 decision
     assert s.tts_voice == "en_US-lessac-medium"  # M0-SP7 decision
+
+
+def test_safety_overrides_roundtrip(tmp_path: Path) -> None:
+    """Task 4: per-kind risk overrides live in config ([safety].overrides)."""
+    s = Settings()
+    s.safety = SafetyConfig(preset="strict", overrides={"type_text": "L3", "click": "L1"})
+    p = tmp_path / "config.toml"
+    s.save(p)
+    loaded = load_settings(p)
+    assert loaded.safety.preset == "strict"
+    assert loaded.safety.overrides == {"type_text": "L3", "click": "L1"}
+
+
+def test_safety_override_with_invalid_level_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        SafetyConfig(overrides={"type_text": "L9"})  # type: ignore[dict-item]
 
 
 def test_toml_roundtrip(tmp_path: Path) -> None:
