@@ -91,6 +91,28 @@ class ElementRegistry:
         self._entries[ref] = refreshed
         return refreshed
 
+    def rematch(self, handle: ElementHandle) -> ElementHandle | None:
+        """Match a previously resolved handle against the CURRENT entries.
+
+        Task 3's ActionLayer calls this right after a fresh snapshot() has
+        re-registered the current walk (elements + runtime ids + nodes): the
+        stale handle is matched by runtime id first (stable across window
+        moves), then role + name + bbox IoU >= IOU_MATCH_THRESHOLD — the same
+        rules as `revalidate`. Returns the refreshed handle (current walk's
+        element/runtime-id/node under the requested ref) or None (element
+        gone). Unlike revalidate(), stored entries stay untouched: the fresh
+        registration remains authoritative.
+        """
+        matched = self._match(handle, list(self._entries.values()))
+        if matched is None:
+            return None
+        return ElementHandle(
+            ref=handle.ref,
+            element=matched.element,
+            runtime_id=matched.runtime_id,
+            node=matched.node,
+        )
+
     def _match(self, stored: ElementHandle, fresh: list[ElementHandle]) -> ElementHandle | None:
         if stored.runtime_id:
             for candidate in fresh:

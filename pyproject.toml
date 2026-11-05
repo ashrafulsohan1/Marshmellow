@@ -66,7 +66,8 @@ markers = [
 
 [tool.mypy]
 python_version = "3.12"
-packages = ["marshmellow.core", "marshmellow.perception"]
+packages = ["marshmellow.core", "marshmellow.perception", "marshmellow.actions",
+            "marshmellow.testing"]
 mypy_path = "src"
 strict = true
 

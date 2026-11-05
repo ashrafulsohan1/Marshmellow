@@ -176,7 +176,12 @@ class UiaAutomationSource:
 
 @dataclass
 class _AutoNode:
-    """Snapshot of one UIA control's properties (satisfies UiaNode)."""
+    """Snapshot of one UIA control's properties (satisfies UiaNode).
+
+    `control` keeps the live uiautomation control the properties came from so
+    the action layer can invoke patterns on the real element (§3.7 step 1) and
+    SetFocus it before keyboard input. Fake sources may omit it.
+    """
 
     runtime_id: str
     control_type: str
@@ -187,6 +192,7 @@ class _AutoNode:
     password: bool
     rect: tuple[int, int, int, int]
     patterns: frozenset[str]
+    control: Any = None
 
 
 def _wrap_control(control: Any) -> _AutoNode | None:
@@ -208,6 +214,7 @@ def _wrap_control(control: Any) -> _AutoNode | None:
             password=bool(control.IsPassword),
             rect=_rect_tuple(control.BoundingRectangle),
             patterns=patterns,
+            control=control,
         )
     except Exception:
         return None
