@@ -21,12 +21,19 @@ IOU_MATCH_THRESHOLD: Final[float] = 0.5
 
 @dataclass
 class ElementHandle:
-    """A resolved ref: the Element as walked plus its live UIA provenance."""
+    """A resolved ref: the Element as walked plus its live UIA provenance.
+
+    `hwnd` is the window the walk came from — the window-identity anchor for
+    the ActionLayer's revalidation (M3 focus-change race): re-walking the
+    element's OWN window keeps a focus change to another app or another
+    instance of the same app from diverting or mis-matching the action.
+    """
 
     ref: str
     element: Element
     runtime_id: str
     node: UiaNode | None = None
+    hwnd: int | None = None
 
 
 def bbox_iou(a: Rect, b: Rect) -> float:
@@ -49,13 +56,17 @@ class ElementRegistry:
         elements: Sequence[Element],
         runtime_ids: Sequence[str],
         nodes: Sequence[UiaNode | None] | None = None,
+        hwnd: int | None = None,
     ) -> None:
         """Replace the registry with one snapshot's elements.
 
         UIA refs carry a runtime id + live node per walk; vision refs (M3 Task 2)
         register with runtime_id="" and node=None — they revalidate by bbox only.
+        `hwnd` stamps the window the walk came from (window-scoped revalidation).
         """
-        self._entries = {h.ref: h for h in _combine(elements, runtime_ids, nodes)}
+        self._entries = {
+            h.ref: h for h in _combine(elements, runtime_ids, nodes, hwnd)
+        }
 
     def resolve(self, ref: str) -> ElementHandle | None:
         return self._entries.get(ref)
@@ -87,6 +98,7 @@ class ElementRegistry:
             element=matched.element,
             runtime_id=matched.runtime_id,
             node=matched.node,
+            hwnd=stored.hwnd,
         )
         self._entries[ref] = refreshed
         return refreshed
@@ -97,13 +109,21 @@ class ElementRegistry:
         Task 3's ActionLayer calls this right after a fresh snapshot() has
         re-registered the current walk (elements + runtime ids + nodes): the
         stale handle is matched by runtime id first (stable across window
-        moves), then role + name + bbox IoU >= IOU_MATCH_THRESHOLD — the same
-        rules as `revalidate`. Returns the refreshed handle (current walk's
-        element/runtime-id/node under the requested ref) or None (element
-        gone). Unlike revalidate(), stored entries stay untouched: the fresh
-        registration remains authoritative.
+        moves), then role + name + bbox IoU >= IOU_MATCH_THRESHOLD. Window
+        identity is part of the match: candidates registered from a DIFFERENT
+        window than the handle's never match, so another instance of the same
+        app (identical names/bboxes) cannot satisfy a ref (M3 focus-change
+        race). Returns the refreshed handle (current walk's element/runtime-id/
+        node under the requested ref) or None (element gone). Unlike
+        revalidate(), stored entries stay untouched: the fresh registration
+        remains authoritative.
         """
-        matched = self._match(handle, list(self._entries.values()))
+        candidates = [
+            entry
+            for entry in self._entries.values()
+            if handle.hwnd is None or entry.hwnd is None or entry.hwnd == handle.hwnd
+        ]
+        matched = self._match(handle, candidates)
         if matched is None:
             return None
         return ElementHandle(
@@ -111,6 +131,7 @@ class ElementRegistry:
             element=matched.element,
             runtime_id=matched.runtime_id,
             node=matched.node,
+            hwnd=matched.hwnd if matched.hwnd is not None else handle.hwnd,
         )
 
     def _match(self, stored: ElementHandle, fresh: list[ElementHandle]) -> ElementHandle | None:
@@ -133,6 +154,7 @@ def _combine(
     elements: Sequence[Element],
     runtime_ids: Sequence[str],
     nodes: Sequence[UiaNode | None] | None,
+    hwnd: int | None = None,
 ) -> list[ElementHandle]:
     if len(elements) != len(runtime_ids):
         raise ValueError(
@@ -146,6 +168,7 @@ def _combine(
             element=element,
             runtime_id=runtime_id,
             node=None if nodes is None else nodes[i],
+            hwnd=hwnd,
         )
         for i, (element, runtime_id) in enumerate(zip(elements, runtime_ids, strict=True))
     ]

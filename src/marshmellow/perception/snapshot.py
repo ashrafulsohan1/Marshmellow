@@ -24,6 +24,7 @@ from marshmellow.core.contracts import (
     PerceptionSnapshot,
     WindowInfo,
 )
+from marshmellow.packs.windows import window_title
 from marshmellow.perception import PerceptionError
 from marshmellow.perception.registry import ElementRegistry, bbox_iou
 from marshmellow.perception.uia_reader import UIAReader
@@ -50,8 +51,23 @@ class ScreenPerception:
         self._foreground = foreground
         self._vision = vision
 
-    def snapshot(self, hint: PerceptionHint | None = None) -> PerceptionSnapshot:
-        window = self._foreground()
+    def snapshot(
+        self, hint: PerceptionHint | None = None, hwnd: int | None = None
+    ) -> PerceptionSnapshot:
+        """UIA-first snapshot of the foreground window — or of `hwnd` when given.
+
+        `hwnd` is the ActionLayer's revalidation seam (M3 focus-change race): the
+        element's OWN window is re-walked, so a focus change cannot divert or
+        mis-match the action. Explicit-hwnd walks are UIA-only — no vision
+        fallback and no screenshot artifacts (they are identity checks, not
+        planner-facing perception). Both paths register the walk's elements with
+        the hwnd they came from (window-scoped rematch in the registry).
+        """
+        window = (
+            WindowInfo(hwnd=hwnd, title=window_title(hwnd), app="")
+            if hwnd is not None
+            else self._foreground()
+        )
         if window is None:
             return PerceptionSnapshot(active_window=None, elements=[])
         items = self._reader.read_with_nodes(window.hwnd)
@@ -60,9 +76,13 @@ class ScreenPerception:
         vision_elements: list[Element] = []
         screenshot: Path | None = None
         marked_image: Path | None = None
-        if self._vision is not None and (
-            (hint is not None and hint.prefer_vision)
-            or len(uia_elements) < FALLBACK_THRESHOLD
+        if (
+            hwnd is None
+            and self._vision is not None
+            and (
+                (hint is not None and hint.prefer_vision)
+                or len(uia_elements) < FALLBACK_THRESHOLD
+            )
         ):
             candidates, vision_ok = self._run_vision(self._vision, hint)
             if vision_ok:
@@ -81,6 +101,7 @@ class ScreenPerception:
             merged,
             [item.runtime_id for item in items] + [""] * len(vision_elements),
             [item.node for item in items] + [None] * len(vision_elements),
+            hwnd=window.hwnd,
         )
         return PerceptionSnapshot(
             active_window=window,

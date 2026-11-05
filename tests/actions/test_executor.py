@@ -126,7 +126,8 @@ class FocusRecorder:
 
 class FakePerception:
     """Mimics ScreenPerception: each snapshot() serves the next scripted state
-    and registers it (elements + runtime ids + nodes) into the shared registry."""
+    and registers it (elements + runtime ids + nodes + hwnd) into the registry.
+    Records which hwnd each walk was asked for (None = the foreground)."""
 
     def __init__(
         self,
@@ -138,13 +139,22 @@ class FakePerception:
         self._states = list(states)
         self._window = window
         self.calls = 0
+        self.hwnd_requests: list[int | None] = []
 
-    def snapshot(self, hint: object = None) -> PerceptionSnapshot:
-        index = min(self.calls, len(self._states) - 1)
+    def snapshot(
+        self, hint: object = None, hwnd: int | None = None
+    ) -> PerceptionSnapshot:
         self.calls += 1
+        self.hwnd_requests.append(hwnd)
+        index = min(self.calls - 1, len(self._states) - 1)
         elements, runtime_ids, nodes = self._states[index]
-        self._registry.register(elements, runtime_ids, nodes)
-        return PerceptionSnapshot(active_window=self._window, elements=list(elements))
+        effective = hwnd if hwnd is not None else (self._window.hwnd if self._window else None)
+        self._registry.register(elements, runtime_ids, nodes, hwnd=effective)
+        if hwnd is None or (self._window is not None and hwnd == self._window.hwnd):
+            window = self._window
+        else:
+            window = WindowInfo(hwnd=hwnd, title="", app="")
+        return PerceptionSnapshot(active_window=window, elements=list(elements))
 
 
 def _seed(
@@ -152,9 +162,12 @@ def _seed(
     elements: Sequence[Element],
     runtime_ids: Sequence[str],
     nodes: Sequence[UiaNode | None] | None = None,
+    hwnd: int | None = WINDOW.hwnd,
 ) -> None:
     """Pre-register the planner-visible state (what get_elements would have done)."""
-    registry.register(list(elements), list(runtime_ids), list(nodes) if nodes else None)
+    registry.register(
+        list(elements), list(runtime_ids), list(nodes) if nodes else None, hwnd=hwnd
+    )
 
 
 def _layer(
@@ -351,6 +364,30 @@ def test_click_uses_revalidated_bbox_center_after_a_move() -> None:
     ]
 
 
+def test_revalidation_walks_the_elements_own_window_after_focus_change() -> None:
+    """M3 DoD focus-change race, failure mode (a): after the foreground moved to
+    another window, the layer must re-walk the ELEMENT's own window (registry
+    hwnd identity) — not the foreground — so the act re-focuses-and-succeeds on
+    the right window instead of refusing or hitting the wrong one."""
+    registry = ElementRegistry()
+    node = FakeNode(patterns=frozenset({"Invoke"}), control=FakeControl())
+    _seed(registry, [_el("e1")], ["rid-1"], [node], hwnd=111)
+    # the foreground is now some OTHER app (hwnd 222)
+    perception = FakePerception(
+        registry, [([_el("e1")], ["rid-1"], [node])],
+        window=WindowInfo(hwnd=222, title="Other App", app="other"),
+    )
+    patterns, recorder = FakePatterns(), RecorderSendInput()
+    layer = _layer(perception, registry, patterns, recorder)
+
+    result = layer.execute(_request("uia_invoke"))
+
+    assert result.ok is True
+    # both walks (revalidation + post-state) targeted the element's window
+    assert perception.hwnd_requests == [111, 111]
+    assert "Other App" not in result.observation  # the foreground never entered the flow
+
+
 # -- (f) hotkey/scroll re-focus the element's window, then emit sequences -------
 
 
@@ -426,7 +463,9 @@ async def test_blocking_walk_does_not_stall_the_resident_loop() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def snapshot(self, hint: object = None) -> PerceptionSnapshot:
+        def snapshot(
+            self, hint: object = None, hwnd: int | None = None
+        ) -> PerceptionSnapshot:
             self.calls += 1
             time.sleep(0.25)  # the blocking "UIA walk"
             registry.register([_el("e1")], ["rid-1"], [node])

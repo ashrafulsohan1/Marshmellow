@@ -124,3 +124,46 @@ def test_revalidate_gone_element_returns_none() -> None:
 def test_revalidate_unknown_ref_returns_none() -> None:
     registry = ElementRegistry()
     assert registry.revalidate("e1", [_el("e1")], ["rid-1"]) is None
+
+
+def test_register_stamps_window_identity() -> None:
+    """Registrations carry the hwnd they were walked from (window-scoped rematch)."""
+    registry = ElementRegistry()
+    registry.register([_el("e1")], ["rid-1"], [FakeNode()], hwnd=42)
+
+    handle = registry.resolve("e1")
+    assert handle is not None
+    assert handle.hwnd == 42
+
+
+def test_register_without_hwnd_leaves_identity_none() -> None:
+    registry = ElementRegistry()
+    registry.register([_el("e1")], ["rid-1"])
+
+    handle = registry.resolve("e1")
+    assert handle is not None
+    assert handle.hwnd is None
+
+
+def test_rematch_rejects_cross_window_candidates() -> None:
+    """M3 focus-change race, failure mode (b): another instance of the same app
+    (identical role+name+bbox, IoU 1.0) must NEVER satisfy a ref — window
+    identity is part of the match."""
+    registry = ElementRegistry()
+    registry.register([_el("e1", bbox=(0, 0, 100, 50))], ["rid-1"], [FakeNode()], hwnd=111)
+    handle = registry.resolve("e1")
+    assert handle is not None
+
+    # same-named twin in another window: rid differs, role+name+IoU would match
+    registry.register(
+        [_el("e2", name="OK", bbox=(0, 0, 100, 50))], ["rid-2"], [FakeNode()], hwnd=222
+    )
+    assert registry.rematch(handle) is None
+
+    # a fresh walk of the SAME window still matches (by runtime id)
+    registry.register(
+        [_el("e3", name="OK", bbox=(0, 0, 100, 50))], ["rid-1"], [FakeNode()], hwnd=111
+    )
+    again = registry.rematch(handle)
+    assert again is not None
+    assert again.hwnd == 111

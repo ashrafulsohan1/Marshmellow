@@ -1,16 +1,19 @@
 """ActionLayer — executes ActionRequests with ref re-validation (01 §3.7).
 
 Flow per `execute()`: (1) resolve `target_ref` in the registry (unknown ->
-planner-visible refusal); (2) revalidate the element against a fresh
-perception walk — runtime-id match first, so a MOVED window still resolves at
-its new bbox; a gone element refuses with a re-snapshot observation, NEVER a
-coordinate fallback on a stale bbox (M3 Review Focus 1); (3) elevated
-(IsElevationRequired) targets are refused — a spoken limitation, never
+planner-visible refusal); (2) revalidate the element against a fresh walk of
+the ELEMENT'S OWN window (its registry hwnd identity — never the foreground,
+which may have moved to another app or another instance of the same app since
+the planner looked; M3 focus-change race) — runtime-id match first, so a MOVED
+window still resolves at its new bbox, and window identity keeps a same-app
+twin from satisfying the ref; a gone element refuses with a re-snapshot
+observation, NEVER a coordinate fallback on a stale bbox (M3 Review Focus 1);
+(3) elevated (admin-token) targets are refused — a spoken limitation, never
 force-elevated; (4) dispatch: UIA patterns on the live node first, then
 keyboard-equivalent (focus + type/hotkey), then synthesized mouse at the
 REVALIDATED bbox center; hotkey/scroll re-focus the element's window first;
-(5) post-state: a fresh snapshot WITHOUT screenshot artifacts plus an
-observation naming the acted element and the new foreground.
+(5) post-state: a fresh walk of the acted window WITHOUT screenshot artifacts
+plus an observation naming the acted element and the window it landed on.
 
 `execute()` never raises — every failure is an ActionResult(ok=False) the
 planner can observe and react to. All blocking work (UIA walks, pattern calls,
@@ -64,9 +67,16 @@ _CLICK_VERBS: Final[dict[str, str]] = {
 
 
 class PerceptionSource(Protocol):
-    """The snapshot seam (ScreenPerception satisfies it)."""
+    """The snapshot seam (ScreenPerception satisfies it).
 
-    def snapshot(self, hint: PerceptionHint | None = None) -> PerceptionSnapshot: ...
+    `hwnd` targets a specific window's walk (the ActionLayer's revalidation
+    seam: the ELEMENT's own window, not the foreground — M3 focus-change race);
+    None walks the foreground.
+    """
+
+    def snapshot(
+        self, hint: PerceptionHint | None = None, hwnd: int | None = None
+    ) -> PerceptionSnapshot: ...
 
 
 def _center(bbox: Rect) -> tuple[int, int]:
@@ -106,10 +116,12 @@ class ActionLayer:
     ) -> ActionResult:
         """Run one action; returns a result the planner can observe, never raises.
 
-        `snapshot` pins the perception state used for revalidation — pass only a
-        snapshot known to be current. The default (None) takes a brand-new
-        `perception.snapshot()` walk, which is what makes the window-move and
-        focus-change races safe (M3 DoD).
+        Revalidation walks the ELEMENT'S OWN window (its registry hwnd identity),
+        never the current foreground: a focus change to another app, or to
+        another instance of the same app, can neither divert the action nor
+        satisfy the ref with a wrong-window element (M3 DoD focus-change race).
+        `snapshot` pins the perception state instead — pass only a snapshot known
+        to be current. The default (None) takes the fresh element-window walk.
         """
         try:
             return self._execute(req, snapshot)
@@ -152,10 +164,17 @@ class ActionLayer:
                 error="unknown_ref",
             )
 
-        # (2) revalidate against a fresh walk. The walk re-registers the current
-        # tree (with runtime ids + live nodes); rematch finds the element the
-        # ref pointed at — by runtime id first (stable across window moves).
-        fresh = snapshot if snapshot is not None else self._perception.snapshot()
+        # (2) revalidate against a fresh walk OF THE ELEMENT'S OWN WINDOW (the
+        # handle's hwnd identity) — never the foreground, which may have moved
+        # to another app or another instance of the same app since the planner
+        # looked. The walk re-registers that window's tree (with runtime ids +
+        # live nodes); rematch finds the element the ref pointed at — runtime id
+        # first (stable across window moves), cross-window candidates rejected.
+        fresh = (
+            snapshot
+            if snapshot is not None
+            else self._perception.snapshot(hwnd=handle.hwnd)
+        )
         revalidated = self._registry.rematch(handle)
         if revalidated is None:
             return ActionResult(
@@ -177,7 +196,7 @@ class ActionLayer:
             )
 
         verb = self._dispatch(req, element, node, fresh)
-        return self._post_state(verb, element)
+        return self._post_state(verb, element, revalidated.hwnd)
 
     def _dispatch(
         self,
@@ -297,9 +316,13 @@ class ActionLayer:
         self._sleep(ms / 1000.0)
         return ActionResult(ok=True, observation=f"waited {ms} ms")
 
-    def _post_state(self, verb: str, element: Element) -> ActionResult:
-        """Step (5): fresh snapshot WITHOUT screenshot artifacts + observation."""
-        after = self._perception.snapshot().model_copy(
+    def _post_state(self, verb: str, element: Element, hwnd: int | None) -> ActionResult:
+        """Step (5): fresh snapshot WITHOUT screenshot artifacts + observation.
+
+        The walk targets the acted window (the element's own) so the planner's
+        verify loop sees the effect even when focus raced; `hwnd=None` falls
+        back to the foreground walk (vision-element refs)."""
+        after = self._perception.snapshot(hwnd=hwnd).model_copy(
             update={"screenshot": None, "marked_image": None}
         )
         window = after.active_window

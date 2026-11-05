@@ -54,19 +54,25 @@ class SpySendInput:
 Stack = tuple[ActionLayer, ScreenPerception, ElementRegistry, UIAReader]
 
 
+def _real_foreground() -> WindowInfo | None:
+    """The production seam (01-architecture §3.6): perception follows the REAL
+    foreground window. No pinning — the focus-change race must be real."""
+    hwnd = ctypes.windll.user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    return WindowInfo(hwnd=hwnd, title="", app="foreground")
+
+
 def _stack(
     hwnd: int,
     send_input: Callable[[Sequence[InputEvent]], int] | None = None,
     jitter_px: int = 2,
 ) -> Stack:
-    """Real perception + action stack bound to the fixture window (D6: own window)."""
+    """Real perception + action stack; perception uses the real foreground seam
+    (D6: the test focuses its fixture window before snapshotting)."""
     registry = ElementRegistry()
     reader = UIAReader(source=UiaAutomationSource())
-    perception = ScreenPerception(
-        reader,
-        registry,
-        foreground=lambda: WindowInfo(hwnd=hwnd, title=f"fixture-{hwnd:#x}", app="fixture"),
-    )
+    perception = ScreenPerception(reader, registry, foreground=_real_foreground)
     inputs = InputSynthesizer(
         send_input=send_input if send_input is not None else send_input_native,
         jitter_px=jitter_px,
@@ -116,6 +122,7 @@ def test_notepad_type_text_lands_in_document() -> None:
     with FixtureApp("notepad") as app:
         layer, perception, _registry, _reader = _stack(app.hwnd)
         app.wait_element(app.hwnd, "Document", "Text editor", timeout=20.0)
+        assert focus_window(app.hwnd) and _wait_foreground(app.hwnd)
         document = _pick(perception.snapshot(), "Document")
         original = app.element_value(app.hwnd, app.wait_element(app.hwnd, "Document").ref)
         try:
@@ -155,6 +162,7 @@ def test_calculator_clicks_compute_42() -> None:
     with FixtureApp("calculator") as app:
         layer, perception, _registry, _reader = _stack(app.hwnd)
         app.wait_element(app.hwnd, "Button", "Zero", timeout=30.0)
+        assert focus_window(app.hwnd) and _wait_foreground(app.hwnd)
         snapshot = perception.snapshot()
         buttons = {e.name: e for e in snapshot.elements if e.role == "Button"}
         for name in ("Four", "Two", "Equals"):
@@ -172,6 +180,7 @@ def test_window_move_race_revalidates_to_new_bbox() -> None:
             app.hwnd, send_input=spy, jitter_px=0  # exact-center assertion
         )
         app.wait_element(app.hwnd, "Document", "Text editor", timeout=20.0)
+        assert focus_window(app.hwnd) and _wait_foreground(app.hwnd)
         document = _pick(perception.snapshot(), "Document")
         old_center = _center(document.bbox)
 
@@ -205,10 +214,14 @@ def test_focus_change_race_types_into_original_notepad() -> None:
     with FixtureApp("notepad") as app1, FixtureApp("notepad") as app2:
         layer, perception, _registry, _reader = _stack(app1.hwnd)
         app1.wait_element(app1.hwnd, "Document", "Text editor", timeout=20.0)
+        assert focus_window(app1.hwnd) and _wait_foreground(app1.hwnd)
         document = _pick(perception.snapshot(), "Document")
         original = app1.element_value(app1.hwnd, app1.wait_element(app1.hwnd, "Document").ref)
         try:
-            # steal the focus to the OTHER fixture window (the race)
+            # steal the focus to the OTHER fixture window (the race). Guards both
+            # failure modes: (a) refusing "element gone" instead of re-focus-and-
+            # succeed, (b) matching the other window's identical document and
+            # typing THERE (ok=True, wrong target).
             assert focus_window(app2.hwnd), "could not focus the second notepad"
             assert _wait_foreground(app2.hwnd), "second notepad never got the foreground"
 

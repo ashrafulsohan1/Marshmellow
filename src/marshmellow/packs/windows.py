@@ -77,6 +77,17 @@ def close_window(hwnd: int) -> bool:
     return bool(ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
 
 
+def window_title(hwnd: int) -> str:
+    """Title of one window ('' when it has none or is gone)."""
+    user32 = ctypes.windll.user32
+    length = user32.GetWindowTextLengthW(hwnd)
+    if length <= 0:
+        return ""
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value
+
+
 class WindowsPack:
     """Windows shell operations. Launcher seams are injectable for tests."""
 
