@@ -54,6 +54,15 @@ def test_settings_is_a_startfile_uri() -> None:
     assert _pack().resolve("settings").uri == "ms-settings:"
 
 
+def test_resolve_clock_uri() -> None:
+    assert _pack().resolve("clock").uri == "ms-clock:"
+
+
+def test_resolve_paint_alias() -> None:
+    pack = _pack(which={"mspaint.exe": "C:/Windows/System32/mspaint.exe"})
+    assert pack.resolve("paint").argv == ["mspaint.exe"]
+
+
 def test_unknown_target_resolves_to_none() -> None:
     assert _pack().resolve("zappt") is None
 

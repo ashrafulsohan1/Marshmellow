@@ -1,0 +1,27 @@
+# Fixture scenario: Windows Clock — read-only.
+# 'clock' resolves to the ms-clock: URI (generic DE-pack alias row, M3 T7).
+# Probe (this desktop): the Clock store app shows an update-required state —
+# the reader sees the window chrome only (Window 'Clock' + system buttons),
+# which is exactly what the planner reads and reports. Read-only.
+name: fixture-clock
+instruction: >-
+  check the clock app for me and tell me what it shows
+mode: fixture:clock
+pin:
+  role: Window
+  name_contains: clock
+script:
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: The Clock app is open and responding.
+trace:
+  - get_elements
+  - finish
+spoken_contains:
+  - clock
+assert_elements:
+  - role: Window
+    name_contains: clock

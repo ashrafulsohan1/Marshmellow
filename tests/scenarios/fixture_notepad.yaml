@@ -1,0 +1,40 @@
+# Fixture scenario: Notepad — type via the generic protocol, read back.
+# Probe (this desktop, en-US Win11): the editor is e1 Document 'Text editor'
+# carrying the UIA Value pattern, so type_text resolves to set_value (§3.7).
+# Closing a Notepad with text raises a save prompt — FixtureApp force-kills
+# its own process then (never leaks the window).
+name: fixture-notepad
+instruction: >-
+  type hello marshmellow into notepad
+mode: fixture:notepad
+pin:
+  role: Document
+  name_contains: text editor
+script:
+  - tool: get_elements
+    args: {}
+  - tool: act
+    args:
+      kind: type_text
+      target_ref: e1
+      payload:
+        text: hello marshmellow
+      rationale: type the greeting into the editor
+      risk: L2
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Typed the greeting; Notepad now shows hello marshmellow.
+trace:
+  - get_elements
+  - act:type_text
+  - get_elements
+  - finish
+spoken_contains:
+  - hello
+assert_elements:
+  - role: Document
+    name_contains: text editor
+    value_contains: hello marshmellow

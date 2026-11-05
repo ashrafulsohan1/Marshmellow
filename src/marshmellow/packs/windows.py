@@ -28,11 +28,14 @@ _ALIAS_ARGV: dict[str, list[list[str]]] = {
     "explorer": [["explorer.exe"]],
     "terminal": [["wt.exe"], ["cmd.exe"]],
     "browser": [["cmd", "/c", "start", "", "about:blank"]],
+    "paint": [["mspaint.exe"]],
 }
 # alias -> URI opened via os.startfile
 _ALIAS_URI: dict[str, str] = {
     "settings": "ms-settings:",
+    "clock": "ms-clock:",
 }
+# (paint joins the argv table above; both rows are generic DE-pack aliases — M3 T7)
 
 
 class LaunchPlan(BaseModel):

@@ -1,9 +1,13 @@
-"""Scripted scenario runner — YAML-driven headless end-to-end proof runs (M3 Task 6).
+"""Scenario runner — YAML-driven end-to-end proof runs (M3 Tasks 6-7).
 
-A scenario YAML pins the instruction, the canned UIA states (a JSON list of
-``PerceptionSnapshot`` dumps mirroring a fixture page's states), the fake
-provider's ordered tool script, the user's scripted confirm answers, and the
-assertions (the executed trace + substrings of the final spoken summary).
+Two modes. **Scripted** (M3 Task 6) is fully headless: a scenario YAML pins the
+instruction, the canned UIA states (a JSON list of ``PerceptionSnapshot`` dumps
+mirroring a fixture page's states), the fake provider's ordered tool script, the
+user's scripted confirm answers, and the assertions (the executed trace +
+substrings of the final spoken summary). **Fixture-app** (M3 Task 7,
+``run_fixture`` / ``mode: fixture:<alias>``) runs the same production loop
+against a REAL app window: real perception walking the fixture's own window,
+real ActionLayer, real SafetyGate — see the fixture section at the bottom.
 
 ``run_scripted`` builds ``App(headless=True)`` around the REAL M3 stack: the
 real ``ScreenPerception`` with a real ``UIAReader`` over :class:`CannedUiaSource`
@@ -38,12 +42,15 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import yaml  # type: ignore[import-untyped]  # transitive dep (faster-whisper→ctranslate2)
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from marshmellow.actions.executor import ActionLayer
+from marshmellow.actions.input_synthesis import InputSynthesizer
+from marshmellow.actions.uia_actions import UiaAutomationPatterns
 from marshmellow.app import App
 from marshmellow.core.config import Settings
 from marshmellow.core.contracts import (
@@ -60,15 +67,18 @@ from marshmellow.core.contracts import (
     WindowInfo,
 )
 from marshmellow.packs.base import DEShell
+from marshmellow.packs.windows import WindowsPack, window_title
+from marshmellow.perception import PerceptionError
 from marshmellow.perception.registry import ElementRegistry
 from marshmellow.perception.snapshot import ScreenPerception
-from marshmellow.perception.uia_reader import UiaNode, UIAReader
+from marshmellow.perception.uia_reader import UiaAutomationSource, UiaNode, UIAReader
 from marshmellow.perception.vision import VisionPerceiver
 from marshmellow.planner.orchestrator import LLMPlanner
 from marshmellow.planner.tools import ScreenToolbox
 from marshmellow.safety.confirm import ConfirmFlow
 from marshmellow.safety.gate import SafetyGate
 from marshmellow.safety.policy import RiskPolicy
+from marshmellow.testing.fixtures import FixtureApp, FixtureError, focus_window
 from marshmellow.tts.fake import FakeTTS
 
 # Inverse of the reader's pattern map: canned Element actions back to the UIA
@@ -98,6 +108,24 @@ class ScriptCall(BaseModel):
     args: dict[str, object] = Field(default_factory=dict)
 
 
+class ElementAssertion(BaseModel):
+    """One UIA-tree assertion (fixture scenarios): a role plus substring matches.
+
+    Matching is case-insensitive. ``value_contains`` reads the UIA Value pattern
+    (edits/documents); ``text_contains`` reads the UIA TextPattern document text
+    (conhost's 'Text Area', scrollbacks). Assertions run against a RAW walk of
+    the window — ALL controls, not just the interactable subset the planner sees
+    — so read-only surfaces (results, status text) are assertable too.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: str = Field(min_length=1)
+    name_contains: str = ""
+    value_contains: str | None = None
+    text_contains: str | None = None
+
+
 class ScenarioSpec(BaseModel):
     """The pinned top-level YAML keys; unknown keys are rejected."""
 
@@ -110,6 +138,10 @@ class ScenarioSpec(BaseModel):
     script: list[ScriptCall] = Field(default_factory=list)
     trace: list[str] = Field(default_factory=list)
     spoken_contains: list[str] = Field(default_factory=list)
+    # fixture mode only:
+    launch: str | None = None  # opened via pack.open_app instead of the bare alias
+    pin: ElementAssertion | None = None  # app state that must exist BEFORE acting
+    assert_elements: list[ElementAssertion] = Field(default_factory=list)
 
     @field_validator("trace")
     @classmethod
@@ -123,6 +155,10 @@ class ScenarioSpec(BaseModel):
     def _pinned_combinations(self) -> ScenarioSpec:
         if self.mode == "scripted" and self.snapshots is None:
             raise ValueError("scripted mode requires a snapshots path")
+        if self.mode != "scripted" and self.snapshots is not None:
+            raise ValueError("canned snapshots belong to scripted mode only")
+        if self.mode == "scripted" and (self.launch or self.pin or self.assert_elements):
+            raise ValueError("launch/pin/assert_elements belong to fixture mode only")
         for entry in self.script:
             if entry.tool == "ask_user" and not isinstance(entry.args.get("answer"), str):
                 raise ValueError("ask_user script entries need a string args.answer")
@@ -133,11 +169,16 @@ class ScenarioSpec(BaseModel):
 
 @dataclass
 class ScenarioReport:
-    """The run's outcome: assertion verdict, executed trace, final spoken text."""
+    """The run's outcome: assertion verdict, executed trace, final spoken text.
+
+    ``element_count`` (fixture runs) is the fresh interactable-element count of
+    the fixture window after the run — the SP1 fallback-threshold measure.
+    """
 
     ok: bool
     trace: list[str]
     spoken: str
+    element_count: int | None = None
 
 
 def load_scenario(path: Path) -> ScenarioSpec:
@@ -160,6 +201,10 @@ def load_scenario(path: Path) -> ScenarioSpec:
         raise ScenarioError(f"invalid scenario {path}: {exc}") from exc
     if spec.snapshots is not None and not spec.snapshots.is_absolute():
         spec.snapshots = path.parent / spec.snapshots
+    if spec.launch is not None:
+        candidate = path.parent / spec.launch
+        if candidate.is_file():
+            spec.launch = candidate.as_uri()  # a fixture file → file:/// URI
     return spec
 
 
@@ -395,7 +440,7 @@ class _RunWiring:
     """Everything the run needs in one place (the App plus the recording seams)."""
 
     app: App
-    layer: ScenarioActionLayer
+    layer: ScenarioActionLayer | _RecordingActionLayer
     provider: ScenarioProvider
 
 
@@ -587,3 +632,245 @@ def _assertions_hold(spec: ScenarioSpec, trace: list[str], spoken: str) -> bool:
         return False
     lowered = spoken.lower()
     return all(needle.lower() in lowered for needle in spec.spoken_contains)
+
+
+# -- fixture-app mode (M3 Task 7): the REAL stack against a REAL window -----------
+#
+# run_fixture launches the scenario's own fixture app (FixtureApp), pins its
+# state, and runs the production loop — real ScreenPerception (UIA walk of the
+# fixture window), real ActionLayer with UIA patterns + SendInput, real
+# SafetyGate — driven by the same scripted fake provider as scripted mode. Zero
+# real provider calls are possible. Assertions read UIA TREE STATE: the YAML's
+# ``assert_elements`` entries are matched against a RAW UIA walk of the window
+# (all controls — results/status text are assertable, not just interactables),
+# while ``element_count`` reports the interactable count the planner's lens
+# (the reader) sees — the SP1 fallback-threshold measure. The run closes its
+# own window (the FixtureApp context) — new-windows-only, SP1.
+
+
+class _RecordingActionLayer:
+    """Wraps the REAL ActionLayer and records requests that EXECUTED (ok=True),
+    so the executed-trace semantics match scripted mode: gate refusals, unknown
+    refs and stale refs are attempts, not executions, and stay off the trace."""
+
+    def __init__(self, real: ActionLayer) -> None:
+        self._real = real
+        self.requests: list[ActionRequest] = []
+
+    def execute(
+        self, req: ActionRequest, snapshot: PerceptionSnapshot | None = None
+    ) -> ActionResult:
+        result = self._real.execute(req, snapshot)
+        if result.ok:
+            self.requests.append(req)
+        return result
+
+
+def run_fixture(
+    spec: ScenarioSpec,
+    *,
+    provider: ScenarioProvider,
+    pack: WindowsPack,
+    tts: FakeTTS,
+    log_dir: Path | None = None,
+    fixture_timeout: float = 15.0,
+) -> ScenarioReport:
+    """Run one fixture-app scenario against the real desktop stack.
+
+    Launches ``fixture:<alias>`` via :class:`FixtureApp` (``launch`` opens a
+    specific target instead of the bare alias), focuses it (D6: our own
+    foreground window — also wakes lazy UIA trees such as Chromium's), waits
+    for the ``pin`` element (app state pinned BEFORE acting), then submits the
+    instruction. Fails cleanly (ScenarioError) when the fixture app cannot be
+    launched or its window never appears.
+    """
+    if not spec.mode.startswith("fixture:"):
+        raise ScenarioError(
+            f"run_fixture runs mode 'fixture:<alias>' only, got {spec.mode!r}"
+        )
+    alias = spec.mode.split(":", 1)[1]
+    try:
+        with FixtureApp(
+            alias, pack=pack, timeout=fixture_timeout, launch=spec.launch
+        ) as fx:
+            hwnd = fx.hwnd
+            if hwnd is None:  # __enter__ guarantees it; narrows for the checker
+                raise FixtureError("fixture window vanished right after launch")
+            focus_window(hwnd)
+            if spec.pin is not None:
+                fx.wait_element(hwnd, spec.pin.role, spec.pin.name_contains, timeout=20.0)
+            wiring = _build_fixture_run(spec, provider, pack, tts, log_dir, hwnd)
+            wiring.app.start()
+            try:
+                handle = asyncio.run(wiring.app.submit_text(spec.instruction))
+            finally:
+                wiring.app.stop()
+            result = handle.result
+            trace = _executed_trace(provider.emitted, wiring.layer.requests)
+            spoken = result.summary_to_speak if result is not None else ""
+            element_count = len(_fresh_reader_walk(hwnd))
+            ok = (
+                result is not None
+                and _assertions_hold(spec, trace, spoken)
+                and _assert_elements_ok(hwnd, spec.assert_elements)
+            )
+            return ScenarioReport(
+                ok=ok, trace=trace, spoken=spoken, element_count=element_count
+            )
+    except FixtureError as exc:
+        raise ScenarioError(f"fixture app failed: {exc}") from exc
+
+
+def _build_fixture_run(
+    spec: ScenarioSpec,
+    provider: ScenarioProvider,
+    pack: WindowsPack,
+    tts: FakeTTS,
+    log_dir: Path | None,
+    hwnd: int,
+) -> _RunWiring:
+    """Compose the headless App around the REAL perception/action/gate stack.
+
+    Perception's foreground seam is pinned to the fixture window (the task owns
+    it, D6 — scenario determinism); vision stays unwired (the fixture corpus is
+    UIA-first; a sparse tree then simply returns fewer elements, never a VLM
+    call — the paint scenario proves that on the provider).
+    """
+    registry = ElementRegistry()
+    reader = UIAReader(source=UiaAutomationSource())
+    perception = ScreenPerception(
+        reader=reader,
+        registry=registry,
+        foreground=lambda: WindowInfo(hwnd=hwnd, title=window_title(hwnd), app=""),
+        vision=None,
+    )
+    layer = _RecordingActionLayer(
+        ActionLayer(
+            perception=perception,
+            registry=registry,
+            patterns=UiaAutomationPatterns(),
+            inputs=InputSynthesizer(),
+            focus_window=focus_window,
+        )
+    )
+    ask = ScriptedAskChannel(_ask_answers(spec))
+    gate = SafetyGate(
+        policy=RiskPolicy(),
+        confirm=ConfirmFlow(ask=ask.ask, fallback=None),  # headless: ambiguity refuses
+        announce=lambda text: tts.say(SpeakRequest(text=text, priority="ack")),
+        kill_probe=lambda: False,
+        resolve=_resolver(registry),
+    )
+    holder: dict[str, Callable[[ActionRequest], ActionResult]] = {}
+    toolbox = ScreenToolbox(perception, registry, lambda req: holder["execute"](req))
+    app = App(
+        Settings(),
+        headless=True,
+        log_dir=log_dir,
+        pack=pack,
+        perception=perception,
+        action_layer=layer,
+        gate=gate,
+        ask_channel=ask,
+        planner=LLMPlanner(provider, toolbox=toolbox),
+    )
+    holder["execute"] = app._execute
+    app.tts = tts  # ack announcements + the spoken result land on the caller's recorder
+    return _RunWiring(app=app, layer=layer, provider=provider)
+
+
+def _fresh_reader_walk(hwnd: int) -> list[Element]:
+    """Fresh interactable walk of the fixture window (the planner's lens)."""
+    reader = UIAReader(source=UiaAutomationSource())
+    reader.invalidate(hwnd)
+    try:
+        return reader.read(hwnd)
+    except PerceptionError:
+        return []
+
+
+@dataclass(frozen=True)
+class _RawUiaNode:
+    """One node of the raw UIA walk: role/name plus optional pattern reads."""
+
+    role: str
+    name: str
+    value: str
+    text: str
+
+
+_RAW_WALK_DEPTH: Final = 30
+_RAW_TEXT_LIMIT: Final = 8000
+
+
+def _raw_uia_nodes(hwnd: int, *, with_values: bool, with_text: bool) -> list[_RawUiaNode]:
+    """Walk EVERY control under the window (not just interactables).
+
+    Roles are the control type names minus the ``Control`` suffix — the same
+    convention the reader's roles use (Edit, Button, Document, Text, ...).
+    Value/TextPattern reads are guarded: nodes without the pattern contribute
+    empty strings. Only enabled when an assertion needs them (COM cost).
+    """
+    import uiautomation as uia  # Windows-only; untyped upstream
+
+    root = uia.ControlFromHandle(hwnd)
+    nodes: list[_RawUiaNode] = []
+    stack: list[tuple[Any, int]] = [(root, 0)] if root is not None else []
+    while stack:
+        node, depth = stack.pop()
+        try:
+            name = str(node.Name or "")
+        except Exception:
+            name = ""
+        value = ""
+        if with_values:
+            try:
+                value = str(node.GetValuePattern().Value or "")
+            except Exception:
+                value = ""
+        text = ""
+        if with_text:
+            try:
+                text = str(node.GetTextPattern().DocumentRange.GetText(_RAW_TEXT_LIMIT) or "")
+            except Exception:
+                text = ""
+        role = str(getattr(node, "ControlTypeName", "")).removesuffix("Control")
+        nodes.append(_RawUiaNode(role=role, name=name, value=value, text=text))
+        if depth < _RAW_WALK_DEPTH:
+            try:
+                stack.extend((child, depth + 1) for child in node.GetChildren())
+            except Exception:
+                pass
+    return nodes
+
+
+def _assert_elements_ok(hwnd: int, assertions: list[ElementAssertion]) -> bool:
+    """Every assertion must match at least one raw node (case-insensitive)."""
+    if not assertions:
+        return True
+    nodes = _raw_uia_nodes(
+        hwnd,
+        with_values=any(a.value_contains is not None for a in assertions),
+        with_text=any(a.text_contains is not None for a in assertions),
+    )
+    lowered = [
+        (node.role.lower(), node.name.lower(), node.value.lower(), node.text.lower())
+        for node in nodes
+    ]
+    for assertion in assertions:
+        role = assertion.role.lower()
+        name_needle = assertion.name_contains.lower()
+        matches = [
+            node for node in lowered if node[0] == role and name_needle in node[1]
+        ]
+        if not matches:
+            return False
+        if assertion.value_contains is not None and not any(
+            assertion.value_contains.lower() in node[2] for node in matches
+        ):
+            return False
+        if assertion.text_contains is not None and not any(
+            assertion.text_contains.lower() in node[3] for node in matches
+        ):
+            return False
+    return True

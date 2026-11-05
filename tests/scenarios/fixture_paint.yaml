@@ -1,0 +1,31 @@
+# Fixture scenario: Paint — open + read-only, zero VLM calls.
+# 'paint' resolves to mspaint.exe (generic argv row, M3 T7). Probe (Win11 new
+# Paint): the ribbon is rich (104 interactable elements — SP1's "UIA-sparse"
+# premise no longer holds on this build), so vision would NOT be triggered by
+# the threshold anyway; no vision perceiver is wired, so the sparse-threshold
+# path degrades to a UIA-only snapshot with zero provider calls (D5), which
+# the test proves on the provider. The planner reads the ribbon and reports.
+name: fixture-paint
+instruction: >-
+  open paint and tell me which tools are on the ribbon
+mode: fixture:paint
+pin:
+  role: Button
+  name_contains: pencil
+script:
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Paint is open — the ribbon has Select, Crop, Pencil, Fill and Eraser.
+trace:
+  - get_elements
+  - finish
+spoken_contains:
+  - paint
+assert_elements:
+  - role: Button
+    name_contains: pencil
+  - role: Button
+    name_contains: eraser

@@ -1,0 +1,63 @@
+# Fixture scenario: terminal — type an echo line, read it back.
+# launch pins conhost.exe: this desktop delegates the default terminal to
+# Windows Terminal, whose UIA focus always lands on the tab strip (probed —
+# typed input can NEVER reach the shell through the generic protocol there).
+# conhost's provider accepts generic focus+typing: type_text targets the
+# reader-visible scrollbar button 'Line up' (e1) — SetFocus lands on the
+# conhost window and SendInput reaches the shell — then a hotkey Enter runs
+# the line. The console buffer is exposed ONLY via TextPattern on the 'Text
+# Area' Document (not in the interactable listing), so the read-back assertion
+# uses text_contains on the raw walk.
+name: fixture-terminal
+instruction: >-
+  run an echo of marshmellow-scenario in the terminal
+mode: fixture:terminal
+launch: conhost.exe
+pin:
+  role: Button
+  name_contains: line up
+script:
+  - tool: get_elements
+    args: {}
+  - tool: act
+    args:
+      kind: type_text
+      target_ref: e1
+      payload:
+        text: echo marshmellow-scenario
+      rationale: type the echo command into the console
+      risk: L2
+  - tool: act
+    args:
+      kind: hotkey
+      target_ref: e1
+      payload:
+        combo: return
+      rationale: run the typed line
+      risk: L1
+  - tool: act
+    args:
+      kind: wait
+      payload:
+        ms: 800
+      rationale: let the shell echo the line
+      risk: L0
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Ran it — the terminal shows echo marshmellow-scenario.
+trace:
+  - get_elements
+  - act:type_text
+  - act:hotkey
+  - act:wait
+  - get_elements
+  - finish
+spoken_contains:
+  - echo
+assert_elements:
+  - role: Document
+    name_contains: text area
+    text_contains: echo marshmellow-scenario

@@ -1,0 +1,58 @@
+# Fixture scenario: Calculator — compute 7+3 by invoking buttons (UIA Invoke),
+# assert the display. Probe (UWP Calculator, en-US): buttons 'Seven' e50,
+# 'Plus' e40, 'Three' e46, 'Equals' e41; the display is a Text element whose
+# NAME carries the result ('Display is 0' → 'Display is 10'). The tree order
+# was identical across repeated walks; the pin waits for the display first.
+name: fixture-calculator
+instruction: >-
+  compute seven plus three in the calculator and tell me the result
+mode: fixture:calculator
+pin:
+  role: Text
+  name_contains: display is
+script:
+  - tool: get_elements
+    args: {}
+  - tool: act
+    args:
+      kind: uia_invoke
+      target_ref: e50
+      rationale: press Seven
+      risk: L1
+  - tool: act
+    args:
+      kind: uia_invoke
+      target_ref: e40
+      rationale: press Plus
+      risk: L1
+  - tool: act
+    args:
+      kind: uia_invoke
+      target_ref: e46
+      rationale: press Three
+      risk: L1
+  - tool: act
+    args:
+      kind: uia_invoke
+      target_ref: e41
+      rationale: press Equals to compute
+      risk: L1
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Done — seven plus three is 10; the calculator display shows it.
+trace:
+  - get_elements
+  - act:uia_invoke
+  - act:uia_invoke
+  - act:uia_invoke
+  - act:uia_invoke
+  - get_elements
+  - finish
+spoken_contains:
+  - "10"
+assert_elements:
+  - role: Text
+    name_contains: display is 10

@@ -33,6 +33,10 @@ _TITLE_HINTS: Final[dict[str, str]] = {
     "calculator": "calc",
     "explorer": "explorer",
     "settings": "settings",
+    # this desktop delegates the default terminal to Windows Terminal, whose UIA
+    # focus lands on the tab strip (typed input never reaches the shell), so the
+    # terminal scenario launches conhost.exe — whose window title carries it.
+    "terminal": "conhost",
 }
 
 _CLOSE_TIMEOUT_S: Final = 5.0
@@ -53,18 +57,26 @@ class FixtureApp:
     """
 
     def __init__(
-        self, alias: str, pack: WindowsPack | None = None, timeout: float = 15.0
+        self,
+        alias: str,
+        pack: WindowsPack | None = None,
+        timeout: float = 15.0,
+        launch: str | None = None,
     ) -> None:
         self._alias = alias
         self._pack = pack if pack is not None else WindowsPack()
         self._timeout = timeout
+        # `launch` opens a specific target (URI/exe) instead of the bare alias —
+        # the scenario's app-state pin (ms-settings:about, a file:/// page, ...).
+        # The title hint still comes from the alias.
+        self._launch = launch
         self._before: set[int] = set()
         self._reader: UIAReader | None = None
         self.hwnd: int | None = None
 
     def __enter__(self) -> FixtureApp:
         self._before = set(top_level_windows())
-        result = self._pack.open_app(self._alias)
+        result = self._pack.open_app(self._launch if self._launch else self._alias)
         if not result.ok:
             raise FixtureError(f"could not launch {self._alias!r}: {result.detail}")
         hint = _TITLE_HINTS.get(self._alias, self._alias.lower())

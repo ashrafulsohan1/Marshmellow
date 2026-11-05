@@ -1,0 +1,32 @@
+# Fixture scenario: Windows Settings, About page — read-only.
+# launch pins ms-settings:about directly (the plain 'settings' alias opens the
+# Settings home). Probe (en-US): the page exposes Hyperlinks ('System
+# protection', 'Advanced system settings') and the 'About' breadcrumb button;
+# walks settle deterministically. Read-only: the planner reads and reports.
+# REQUIRES Settings to be closed first — it is single-instance and would
+# navigate an existing window instead of opening one the fixture owns.
+name: fixture-settings
+instruction: >-
+  read the about page in windows settings and tell me what is on it
+mode: fixture:settings
+launch: ms-settings:about
+pin:
+  role: Hyperlink
+  name_contains: system protection
+script:
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Your Windows About page shows device specifications and related links.
+trace:
+  - get_elements
+  - finish
+spoken_contains:
+  - about
+assert_elements:
+  - role: Button
+    name_contains: about
+  - role: Hyperlink
+    name_contains: advanced system settings

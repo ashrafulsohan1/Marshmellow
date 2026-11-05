@@ -1,0 +1,57 @@
+# Fixture scenario: default browser (Brave here) driving fixtures/local_page.html
+# through its file:/// URI — set_value the search input, invoke the Load
+# videos button, assert the JS-updated result.
+# Probe notes (Brave/Chromium): renderer accessibility activates lazily — the
+# runner focuses the window first, and the pin's polled fresh walks see the
+# page appear within ~1-2 walks. Content refs are stable once active
+# (Document e96, Edit e97, Button e98). The result paragraph is a TextControl
+# with NO patterns (filtered from the planner's interactable listing), so the
+# assertion reads it on the RAW walk.
+# REQUIRES the default browser to be closed first: Chromium reuses an existing
+# window (a new tab, not a new window) and the fixture must own its window.
+name: fixture-browser
+instruction: >-
+  open my channel page in the browser, search for my channel and load the videos
+mode: fixture:browser
+launch: fixtures/local_page.html
+pin:
+  role: Edit
+  name_contains: channel or video search
+script:
+  - tool: get_elements
+    args: {}
+  - tool: act
+    args:
+      kind: uia_set_value
+      target_ref: e97
+      payload:
+        text: my channel
+      rationale: fill the channel search box
+      risk: L2
+  - tool: act
+    args:
+      kind: uia_invoke
+      target_ref: e98
+      rationale: press Load videos
+      risk: L1
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: The page reports 5 videos this week.
+trace:
+  - get_elements
+  - act:uia_set_value
+  - act:uia_invoke
+  - get_elements
+  - finish
+spoken_contains:
+  - 5 videos this week
+assert_elements:
+  - role: Edit
+    name_contains: channel or video search
+    value_contains: my channel
+  - role: Text
+    name_contains: ""
+    text_contains: 5 videos this week

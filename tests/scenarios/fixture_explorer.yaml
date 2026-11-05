@@ -1,0 +1,28 @@
+# Fixture scenario: File Explorer — read-only (read the Home item names).
+# Probe (Win11 Explorer Home): ListItems for Quick access folders (Desktop,
+# Downloads, ...) and recent files. Walk counts vary slightly run-to-run
+# (93↔90 — cloud placeholders), so this scenario acts on nothing: the planner
+# reads the tree and reports, and the assertion only requires ListItems to
+# exist (folder NAMES are user content, not pinned).
+name: fixture-explorer
+instruction: >-
+  list the folder names shown in my file explorer home
+mode: fixture:explorer
+pin:
+  role: ListItem
+  name_contains: ""
+script:
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Your File Explorer home lists the quick access folders and recent files.
+trace:
+  - get_elements
+  - finish
+spoken_contains:
+  - explorer
+assert_elements:
+  - role: ListItem
+    name_contains: ""
