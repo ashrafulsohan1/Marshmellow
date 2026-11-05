@@ -21,6 +21,7 @@ exists open source. This doc decides **which ingredients we adopt vs build**.
 | Async core | `asyncio` + `pydantic` | stdlib / MIT | EventBus, contracts | — |
 | Local LLM | `ollama` | MIT | one-command local models, vision-capable | llama.cpp server |
 | Config | `tomllib` + pydantic-settings | stdlib / MIT | typed config | — |
+| RSS parsing (M4) | `feedparser` (≥6.0) | **BSD-2-Clause** (verified: 6.0.14 dist metadata, 2026-11-06) | tolerant RSS/Atom parsing for monitor checks — **ADOPTED in M4 Task 1** (`tasks/monitors.py`) | hand-rolled `xml.etree` (no) |
 | Packaging (M5) | `uv`, `ruff`, `pytest`, `pyinstaller` | MIT/Apache | scaffold → installer | MSIX |
 
 ## 2. EVALUATE (patterns or opt-in, decide in SP7/M2)

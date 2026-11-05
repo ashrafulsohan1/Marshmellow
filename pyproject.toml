@@ -18,6 +18,7 @@ dependencies = [
     "uiautomation>=2.0.29",
     "mss>=9",
     "pillow>=10",
+    "feedparser>=6.0",
 ]
 
 [tool.uv]
@@ -74,4 +75,9 @@ strict = true
 # uiautomation ships no stubs/py.typed; the real walker's Control objects are Any.
 [[tool.mypy.overrides]]
 module = "uiautomation"
+ignore_missing_imports = true
+
+# feedparser (M4 monitors) ships no stubs/py.typed; FeedParserDict is dict-like Any.
+[[tool.mypy.overrides]]
+module = "feedparser"
 ignore_missing_imports = true
