@@ -514,3 +514,35 @@ def test_register_rejects_foreground_modes() -> None:
             manager.register(TaskSpec(id="f1", instruction="hi", mode=mode))
     assert BACKGROUND_MODES == frozenset({"background_monitor", "background_job", "scheduled"})
     bus.stop()
+
+
+async def test_register_with_unparseable_monitor_target_raises_and_registers_nothing() -> None:
+    """make_check's ValueError for a bad api_field target must surface SYNCHRONOUSLY
+    from register() — never die inside the marshaled spawn coroutine and leave the
+    handle a silent 'pending' zombie (review fix: the spawn future was dropped)."""
+    bus = EventBus()
+    clock = FakeClock()
+    sleeper = RecordingSleeper(clock)
+    manager = TaskManager(  # default check_factory = the real make_check
+        bus=bus,
+        planner=FakePlanner(),
+        execute=lambda req: ActionResult(ok=True, observation="x"),
+        clock=clock,
+        rng=lambda: 0.0,
+        sleeper=sleeper,
+    )
+    bad = TaskSpec(
+        id="bad",
+        instruction="watch api",
+        mode="background_monitor",
+        monitor=MonitorSpec(
+            kind="api_field", target="http://x/no-fragment", interval_s=60, condition="c"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="api_field"):
+        manager.register(bad)
+
+    assert manager.list_tasks() == [], "a failed registration must not register anything"
+    manager.stop()
+    bus.stop()

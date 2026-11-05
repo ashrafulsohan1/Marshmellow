@@ -35,6 +35,7 @@ import random
 import threading
 import uuid
 from collections.abc import Awaitable, Callable
+from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
@@ -200,15 +201,24 @@ class TaskManager:
         Thread-safe: the loop task is marshaled onto the resident loop, so this
         can be called from planner worker threads and the GUI thread. Returns
         immediately with the handle in state ``pending``; the loop then moves it
-        through the TaskState machine.
+        through the TaskState machine. A monitor spec whose check cannot be
+        built (``make_check`` ValueError on an unparseable target) raises HERE —
+        synchronously, nothing registered — because a failure inside the
+        marshaled spawn coroutine would leave the handle a silent "pending"
+        zombie (the caller, e.g. the create_task path, can still react).
         """
         if spec.mode not in BACKGROUND_MODES:
             raise ValueError(
                 f"register() accepts background modes {sorted(BACKGROUND_MODES)}, "
                 f"got {spec.mode!r}"
             )
-        if spec.mode == "background_monitor" and spec.monitor is None:
-            raise ValueError("background_monitor requires spec.monitor")
+        check: MonitorCheck | None = None
+        if spec.mode == "background_monitor":
+            if spec.monitor is None:
+                raise ValueError("background_monitor requires spec.monitor")
+            # Built HERE, on the caller thread, before anything is registered —
+            # make_check validates the target format and must fail fast.
+            check = self._check_factory(spec.monitor)
         if spec.mode == "scheduled" and spec.schedule is None:
             raise ValueError("scheduled requires spec.schedule")
         self.start()
@@ -218,23 +228,40 @@ class TaskManager:
         loop = self._resident_loop
         if loop is None:  # pragma: no cover — start() just created it
             raise RuntimeError("resident loop missing after start()")
-        asyncio.run_coroutine_threadsafe(self._spawn(handle), loop)
+        future = asyncio.run_coroutine_threadsafe(self._spawn(handle, check), loop)
+        # The future is never dropped: a spawn crash is logged and fails the
+        # handle (a dropped concurrent future would swallow it silently).
+        future.add_done_callback(lambda f: self._log_spawn_failure(spec.id, f))
         return handle
 
-    async def _spawn(self, handle: TaskHandle) -> None:
+    async def _spawn(self, handle: TaskHandle, check: MonitorCheck | None) -> None:
         """Start the long-lived loop coroutine for a registered task (resident loop only)."""
         loop = asyncio.get_running_loop()
-        if handle.spec.mode == "background_monitor":
-            monitor = handle.spec.monitor
-            if monitor is None:  # pragma: no cover — register() validated
-                return
-            loop_task = loop.create_task(self._monitor_loop(handle, self._check_factory(monitor)))
-        elif handle.spec.mode == "scheduled":
-            handle.next_due = handle.spec.schedule
+        spec = handle.spec
+        if spec.mode == "background_monitor":
+            if check is None:  # pragma: no cover — register() built it
+                raise RuntimeError("monitor check missing at spawn")
+            loop_task = loop.create_task(self._monitor_loop(handle, check))
+        elif spec.mode == "scheduled":
+            handle.next_due = spec.schedule
             loop_task = loop.create_task(self._scheduled_loop(handle))
         else:  # background_job: one long turn, started immediately
             loop_task = loop.create_task(self._job_loop(handle))
-        self._loops[handle.spec.id] = loop_task
+        self._loops[spec.id] = loop_task
+
+    def _log_spawn_failure(self, task_id: str, future: Future[None]) -> None:
+        """Defensive net: a spawn crash is logged and fails a still-pending handle."""
+        if future.cancelled():
+            return
+        exc = future.exception()
+        if exc is None:
+            return
+        logger.error("task %s loop crashed before it could start", task_id, exc_info=exc)
+        handle = self._handles.get(task_id)
+        if handle is not None and handle.state == "pending":
+            handle.error = repr(exc)
+            self._emit(task_id, "failed", f"task could not start: {exc}")
+            handle.state = "failed"
 
     def list_tasks(self, state: TaskState | None = None) -> list[TaskHandle]:
         """All registered task handles (registration order); optionally one state only."""
