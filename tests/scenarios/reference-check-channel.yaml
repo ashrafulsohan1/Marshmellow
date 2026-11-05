@@ -1,0 +1,31 @@
+# Scripted reference scenario (M3 DoD): read a channel-like page, press the load
+# button, verify the answer on a fresh read, and speak it. The canned snapshots
+# mirror fixtures/local_page.html: state 1 = empty result, state 2 = after the
+# "Load videos" invoke (the recording action layer advances the state on success).
+name: reference-check-channel
+instruction: >-
+  check my channel page and tell me how many videos I posted this week
+mode: scripted
+snapshots: fixtures/reference-page.json
+script:
+  - tool: get_elements
+    args: {}
+  - tool: act
+    args:
+      kind: uia_invoke
+      target_ref: e2
+      rationale: load the video list
+      risk: L1
+  - tool: get_elements
+    args: {}
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Your channel page shows 5 videos this week.
+trace:
+  - get_elements
+  - act:uia_invoke
+  - get_elements
+  - finish
+spoken_contains:
+  - 5 videos this week

@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  Fixture for tests/scenarios/reference-check-channel.yaml — a static channel-like
+  page: an input, a button, and a JS-updated result element. The scripted runner
+  replays canned PerceptionSnapshot dumps of this page (reference-page.json: state
+  1 = empty result, state 2 = after "Load videos"); it is a fixture, not an
+  integration — nothing here is loaded by Task 6's tests. Task 7's browser fixture
+  scenario opens this file via its file:/// URI and drives the real stack.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Channel hub — Marshmellow fixture browser</title>
+  </head>
+  <body>
+    <h1>Marshmellow channel hub</h1>
+    <input
+      id="channel-search"
+      type="text"
+      aria-label="Channel or video search"
+      placeholder="Channel or video search"
+    />
+    <button id="load-videos" aria-label="Load videos" onclick="loadVideos()">
+      Load videos
+    </button>
+    <p id="videos-this-week" aria-label="Videos this week">Videos this week: —</p>
+    <script>
+      function loadVideos() {
+        document.getElementById("videos-this-week").textContent =
+          "Videos this week: 5 videos this week";
+      }
+    </script>
+  </body>
+</html>

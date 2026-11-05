@@ -1,0 +1,37 @@
+# Scripted vision-fallback scenario (M3 DoD, D5): the canvas app exposes only 3
+# UIA elements (below the SP1 fallback threshold of 10), so the snapshot runs the
+# real SoM vision pass over fixtures/canvas.png — served by the SAME in-process
+# fake provider (the `vision` entry is its canned reply; zero real calls possible).
+# The "12,408 views" value exists only in that reply, so speaking it proves the
+# planner acted on vision (source="vision", refs v1..) elements.
+name: vision-fallback
+instruction: >-
+  the canvas app is nearly UIA-blind; press play on the canvas and tell me the
+  view count shown there
+mode: scripted
+snapshots: fixtures/canvas-sparse.json
+script:
+  - tool: vision
+    args:
+      reply: >-
+        {"elements": [{"tile": 15, "role": "Button", "name": "Play button"},
+        {"tile": 22, "role": "Text", "name": "view count",
+        "value": "12,408 views"}]}
+  - tool: get_elements
+    args: {}
+  - tool: act
+    args:
+      kind: click
+      target_ref: v1
+      rationale: press play on the canvas
+      risk: L1
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Pressed play. The canvas reports 12,408 views.
+trace:
+  - get_elements
+  - act:click
+  - finish
+spoken_contains:
+  - 12,408 views

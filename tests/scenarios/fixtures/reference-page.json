@@ -1,0 +1,90 @@
+[
+  {
+    "active_window": {
+      "hwnd": 4294967001,
+      "title": "Channel hub — Marshmellow fixture browser",
+      "app": "browser"
+    },
+    "elements": [
+      {
+        "ref": "e1",
+        "role": "Edit",
+        "name": "Channel or video search",
+        "value": "",
+        "bbox": { "x": 30, "y": 60, "w": 260, "h": 32 },
+        "enabled": true,
+        "actions": ["set_value", "read"],
+        "source": "uia",
+        "password": false
+      },
+      {
+        "ref": "e2",
+        "role": "Button",
+        "name": "Load videos",
+        "value": null,
+        "bbox": { "x": 30, "y": 110, "w": 120, "h": 36 },
+        "enabled": true,
+        "actions": ["invoke", "read"],
+        "source": "uia",
+        "password": false
+      },
+      {
+        "ref": "e3",
+        "role": "Text",
+        "name": "Videos this week",
+        "value": "",
+        "bbox": { "x": 30, "y": 170, "w": 220, "h": 28 },
+        "enabled": true,
+        "actions": ["read"],
+        "source": "uia",
+        "password": false
+      }
+    ],
+    "screenshot": null,
+    "marked_image": null
+  },
+  {
+    "active_window": {
+      "hwnd": 4294967001,
+      "title": "Channel hub — Marshmellow fixture browser",
+      "app": "browser"
+    },
+    "elements": [
+      {
+        "ref": "e1",
+        "role": "Edit",
+        "name": "Channel or video search",
+        "value": "",
+        "bbox": { "x": 30, "y": 60, "w": 260, "h": 32 },
+        "enabled": true,
+        "actions": ["set_value", "read"],
+        "source": "uia",
+        "password": false
+      },
+      {
+        "ref": "e2",
+        "role": "Button",
+        "name": "Load videos",
+        "value": null,
+        "bbox": { "x": 30, "y": 110, "w": 120, "h": 36 },
+        "enabled": true,
+        "actions": ["invoke", "read"],
+        "source": "uia",
+        "password": false
+      },
+      {
+        "ref": "e3",
+        "role": "Text",
+        "name": "Videos this week",
+        "value": "5 videos this week",
+        "bbox": { "x": 30, "y": 170, "w": 220, "h": 28 },
+        "enabled": true,
+        "actions": ["read"],
+        "source": "uia",
+        "password": false
+      }
+    ],
+    "screenshot": null,
+    "marked_image": null
+  }
+]

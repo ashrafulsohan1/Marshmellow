@@ -1,0 +1,46 @@
+[
+  {
+    "active_window": {
+      "hwnd": 4294967003,
+      "title": "Settings — Sign in",
+      "app": "settings"
+    },
+    "elements": [
+      {
+        "ref": "e1",
+        "role": "Edit",
+        "name": "Username",
+        "value": "abby",
+        "bbox": { "x": 60, "y": 80, "w": 240, "h": 30 },
+        "enabled": true,
+        "actions": ["set_value", "read"],
+        "source": "uia",
+        "password": false
+      },
+      {
+        "ref": "e2",
+        "role": "Edit",
+        "name": "Password",
+        "value": "",
+        "bbox": { "x": 60, "y": 120, "w": 240, "h": 30 },
+        "enabled": true,
+        "actions": ["set_value", "read"],
+        "source": "uia",
+        "password": true
+      },
+      {
+        "ref": "e3",
+        "role": "Button",
+        "name": "Sign in",
+        "value": null,
+        "bbox": { "x": 60, "y": 170, "w": 110, "h": 34 },
+        "enabled": true,
+        "actions": ["invoke", "read"],
+        "source": "uia",
+        "password": false
+      }
+    ],
+    "screenshot": null,
+    "marked_image": null
+  }
+]

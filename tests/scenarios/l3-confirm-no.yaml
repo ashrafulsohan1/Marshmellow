@@ -1,0 +1,35 @@
+# Scripted L3 confirmation, answered "no" (M3 DoD): identical fixture, ref and
+# kind to l3-confirm-yes.yaml — the only variable is the scripted answer. "no"
+# must refuse the act fail-closed (nothing reaches the action layer, hence no
+# act: entry in the executed trace) and the summary must say so.
+name: l3-confirm-no
+instruction: >-
+  fill in the password field on the settings sign-in form
+mode: scripted
+snapshots: fixtures/settings-form.json
+script:
+  - tool: get_elements
+    args: {}
+  - tool: ask_user
+    args:
+      answer: "no"
+  - tool: act
+    args:
+      kind: uia_set_value
+      target_ref: e2
+      payload:
+        text: correct-horse-battery-staple
+      rationale: enter the password into the sign-in form
+      risk: L0
+  - tool: finish
+    args:
+      ok: false
+      summary_to_speak: >-
+        I did not fill in the password field — you did not confirm, so I left
+        it untouched.
+trace:
+  - get_elements
+  - finish
+spoken_contains:
+  - did not
+  - password

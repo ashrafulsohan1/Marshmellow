@@ -1,0 +1,46 @@
+[
+  {
+    "active_window": {
+      "hwnd": 4294967002,
+      "title": "Marshmellow canvas fixture",
+      "app": "canvas"
+    },
+    "elements": [
+      {
+        "ref": "e1",
+        "role": "Button",
+        "name": "Close",
+        "value": null,
+        "bbox": { "x": 10, "y": 10, "w": 90, "h": 36 },
+        "enabled": true,
+        "actions": ["invoke", "read"],
+        "source": "uia",
+        "password": false
+      },
+      {
+        "ref": "e2",
+        "role": "Edit",
+        "name": "Search canvas",
+        "value": "",
+        "bbox": { "x": 390, "y": 20, "w": 80, "h": 30 },
+        "enabled": true,
+        "actions": ["set_value", "read"],
+        "source": "uia",
+        "password": false
+      },
+      {
+        "ref": "e3",
+        "role": "Text",
+        "name": "status",
+        "value": "",
+        "bbox": { "x": 10, "y": 330, "w": 140, "h": 24 },
+        "enabled": true,
+        "actions": ["read"],
+        "source": "uia",
+        "password": false
+      }
+    ],
+    "screenshot": "canvas.png",
+    "marked_image": null
+  }
+]

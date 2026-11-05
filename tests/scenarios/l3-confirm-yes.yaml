@@ -1,0 +1,32 @@
+# Scripted L3 confirmation, answered "yes" (M3 DoD): the target e2 is a UIA
+# password field, so the gate escalates the type-in to L3 regardless of the
+# declared risk (the script declares L0 on purpose) and asks; "yes" executes.
+name: l3-confirm-yes
+instruction: >-
+  fill in the password field on the settings sign-in form
+mode: scripted
+snapshots: fixtures/settings-form.json
+script:
+  - tool: get_elements
+    args: {}
+  - tool: ask_user
+    args:
+      answer: "yes"
+  - tool: act
+    args:
+      kind: uia_set_value
+      target_ref: e2
+      payload:
+        text: correct-horse-battery-staple
+      rationale: enter the password into the sign-in form
+      risk: L0
+  - tool: finish
+    args:
+      ok: true
+      summary_to_speak: Done — I filled in the password field after you confirmed.
+trace:
+  - get_elements
+  - act:uia_set_value
+  - finish
+spoken_contains:
+  - password field
