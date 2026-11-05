@@ -85,6 +85,17 @@ class PerceptionSnapshot(BaseModel):
     taken_at: datetime = Field(default_factory=datetime.now)
 
 
+class PerceptionHint(BaseModel):
+    """Optional focus for `ScreenPerception.snapshot(hint)` (01-architecture §3.6).
+
+    `prefer_vision` forces the SoM vision fallback even on a rich UIA tree (D5);
+    `query` narrows what perception should look for.
+    """
+
+    query: str | None = None
+    prefer_vision: bool = False
+
+
 RiskLevel = Literal["L0", "L1", "L2", "L3"]
 
 ActionKind = Literal[
@@ -184,6 +195,8 @@ class LLMMessage(BaseModel):
     content: str
     tool_call_id: str | None = None
     name: str | None = None
+    # Base64 PNG data-URLs ("data:image/png;base64,...") — vision fallback path (D5).
+    images: list[str] = Field(default_factory=list)
 
 
 class LLMToolCall(BaseModel):

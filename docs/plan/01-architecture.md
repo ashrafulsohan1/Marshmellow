@@ -1,6 +1,6 @@
 # Marshmellow — Product Architecture
 
-**Status:** v1 draft for review · Last updated: 2026-11-04
+**Status:** v1 draft for review · Last updated: 2026-11-05
 Decisions referenced as D1–D6 (see [PLAN.md §1](../../PLAN.md#1-decisions-locked-with-user-2026-11-04)).
 Changelog at bottom; every contract change must be recorded there.
 
@@ -285,3 +285,4 @@ class SpeakRequest(BaseModel): text: str; priority: Literal["ack","result","back
 - 2026-11-04 (M2): added `SpeakingStarted`/`SpeakingStopped` events — the echo-guard signal (wake detection suppressed while TTS plays).
 - 2026-11-04 (M2): added the LLM layer models — `LLMMessage`, `LLMToolCall`, `LLMRequest`, `LLMResponse`, `ProviderCaps` (tool-calling loop between planner and provider).
 - 2026-11-04 (M2): added activation events — `WakeDetected(score)` (wake phrase crossed the SP3 threshold), `HotkeyPressed`/`HotkeyReleased` (LL-keyboard-hook watcher, D2), and `ActivationDegraded(channel, message)` (a channel failed to start; `message` is spoken verbatim — e.g. hotkey hook registration failure, missing wake model).
+- 2026-11-05 (M3 T2): added `PerceptionHint(query, prefer_vision)` — the optional `snapshot(hint)` argument from §3.6 (`prefer_vision` forces the SoM vision fallback per D5; `query` focuses perception). Added `LLMMessage.images: list[str]` — base64 PNG data-URLs on a message; `openai_compat` maps them to OpenAI `image_url` content parts (vision fallback path, D5). Both default-valued, so existing fakes needed no code change.

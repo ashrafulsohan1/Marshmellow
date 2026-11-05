@@ -100,3 +100,83 @@ async def test_golden_tool_call_round_trip() -> None:
     assert response.tool_calls[0].name == "open_app"
     assert response.tool_calls[0].arguments == {"target": "notepad"}
     assert response.text == ""
+
+
+async def test_images_map_to_image_url_content_parts() -> None:
+    seen: list[httpx.Request] = []
+
+    def plain_response(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        body = {
+            "id": "chatcmpl-2",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 1, "total_tokens": 10},
+        }
+        return httpx.Response(200, json=body, request=request)
+
+    provider = OpenAICompatProvider(
+        base_url="https://api.example.com/v1",
+        model="vision-model",
+        get_key=lambda: "test-key-123",
+        transport=httpx.MockTransport(plain_response),
+    )
+    data_url = "data:image/png;base64,aGVsbG8gcHluZw=="
+    await provider.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="find buttons", images=[data_url])]
+        )
+    )
+
+    assert len(seen) == 1
+    payload = json.loads(seen[0].read())
+    content = payload["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "find buttons"}
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"] == data_url
+
+
+async def test_message_without_images_stays_a_plain_string() -> None:
+    seen: list[httpx.Request] = []
+
+    def plain_response(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "c3",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "m",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            request=request,
+        )
+
+    provider = OpenAICompatProvider(
+        base_url="https://api.example.com/v1",
+        model="m",
+        get_key=lambda: "k",
+        transport=httpx.MockTransport(plain_response),
+    )
+    await provider.complete(
+        LLMRequest(messages=[LLMMessage(role="user", content="just text")])
+    )
+
+    payload = json.loads(seen[0].read())
+    assert payload["messages"][0]["content"] == "just text"

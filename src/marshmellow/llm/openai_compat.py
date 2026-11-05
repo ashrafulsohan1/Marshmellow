@@ -74,6 +74,14 @@ class OpenAICompatProvider:
     @staticmethod
     def _message(m: LLMMessage) -> dict[str, object]:
         d: dict[str, object] = {"role": m.role, "content": m.content}
+        if m.images:
+            # Multimodal content parts (OpenAI dialect): text + one image_url part
+            # per base64 PNG data-URL (vision fallback path, D5).
+            parts: list[dict[str, object]] = [{"type": "text", "text": m.content}]
+            parts.extend(
+                {"type": "image_url", "image_url": {"url": image}} for image in m.images
+            )
+            d["content"] = parts
         if m.tool_call_id is not None:
             d["tool_call_id"] = m.tool_call_id
         if m.name is not None:

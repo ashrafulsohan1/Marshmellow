@@ -15,7 +15,8 @@ exists open source. This doc decides **which ingredients we adopt vs build**.
 | TTS | `piper` (piper1-gpl ≥1.8.0) | **GPL-3.0-or-later** since 1.3/1.8 (last MIT: 1.2.0) → run as an isolated **subprocess**, never an in-process import (SP7) | offline, fast; voice `en_US-lessac-medium` from rhasspy/piper-voices | edge-tts, opt-in only, pin ≥7.3.1 (SP7) |
 | UIA access | `uiautomation` (2.0.29) + `pywinauto` (pin 0.6.9 stable) | **Apache-2.0** / BSD-3-Clause (SP7) | tree walking + patterns — **ADOPTED in M3 Task 1** (`perception/uia_reader.py`; confirms the SP7 table); pywinauto for dialogs/depth (1.0.0b1 revived Oct 2026 — evaluate in M3 only if `uiautomation` hits a wall) | COM interop via ctypes |
 | Input synthesis | **raw SendInput (ctypes)** | stdlib | primary path — `pyautogui` is stale (last release May 2023, SP7) | pyautogui only if a helper is needed |
-| Screenshots | `mss` | MIT | fast multi-monitor capture | PIL.ImageGrab |
+| Screenshots | `mss` (≥9) | MIT | fast multi-monitor capture — **ADOPTED in M3 Task 2** (`perception/vision.py` foreground-window capture) | PIL.ImageGrab |
+| Image annotation | Pillow (≥10) | MIT-CMU | SoM tile annotation (6×6 numbered grid) over captured PNGs — **ADOPTED in M3 Task 2** (Agent-S SoM pattern adopted as an idea, §2) | — |
 | GUI/tray/mascot | `PySide6` | LGPL-3.0 (dynamic link OK) | tray, frameless overlay, widgets, animations | — |
 | Async core | `asyncio` + `pydantic` | stdlib / MIT | EventBus, contracts | — |
 | Local LLM | `ollama` | MIT | one-command local models, vision-capable | llama.cpp server |

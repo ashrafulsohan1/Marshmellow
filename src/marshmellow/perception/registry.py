@@ -48,9 +48,13 @@ class ElementRegistry:
         self,
         elements: Sequence[Element],
         runtime_ids: Sequence[str],
-        nodes: Sequence[UiaNode] | None = None,
+        nodes: Sequence[UiaNode | None] | None = None,
     ) -> None:
-        """Replace the registry with one walk's elements (refs are per-walk e1..eN)."""
+        """Replace the registry with one snapshot's elements.
+
+        UIA refs carry a runtime id + live node per walk; vision refs (M3 Task 2)
+        register with runtime_id="" and node=None — they revalidate by bbox only.
+        """
         self._entries = {h.ref: h for h in _combine(elements, runtime_ids, nodes)}
 
     def resolve(self, ref: str) -> ElementHandle | None:
@@ -106,7 +110,7 @@ class ElementRegistry:
 def _combine(
     elements: Sequence[Element],
     runtime_ids: Sequence[str],
-    nodes: Sequence[UiaNode] | None,
+    nodes: Sequence[UiaNode | None] | None,
 ) -> list[ElementHandle]:
     if len(elements) != len(runtime_ids):
         raise ValueError(
