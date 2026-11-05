@@ -202,6 +202,7 @@ class App:
             self.hotkey_watcher.start()
         if self.wake_watcher is not None:
             self.wake_watcher.start()
+        self.manager.start()  # resident loop for background tasks (§3.12, M4)
         logger.info("Marshmellow %s started (headless=%s)", __version__, self.headless)
 
     def stop(self) -> None:
@@ -215,6 +216,7 @@ class App:
         self.tts.quit()  # full teardown (piper: terminate subprocess); stop() is only barge-in
         if self.mascot is not None:
             self.mascot.close()
+        self.manager.stop()  # before bus.stop(): loop teardown events still dispatch
         self.bus.stop()
 
     async def submit_text(self, text: str) -> TaskHandle:

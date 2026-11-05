@@ -130,6 +130,9 @@ TaskMode = Literal[
     "immediate_reply", "foreground", "background_monitor", "background_job", "scheduled"
 ]
 
+TaskState = Literal["pending", "waiting", "running", "paused", "completed", "failed",
+                    "cancelled"]
+
 
 class MonitorSpec(BaseModel):
     kind: Literal["url_diff", "api_field", "file_hash", "rss"]

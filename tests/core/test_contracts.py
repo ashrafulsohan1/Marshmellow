@@ -1,3 +1,5 @@
+from typing import Literal, get_args, get_origin
+
 import pytest
 from pydantic import ValidationError
 
@@ -6,6 +8,7 @@ from marshmellow.core.contracts import (
     Element,
     SpeakRequest,
     TaskSpec,
+    TaskState,
 )
 
 
@@ -41,3 +44,11 @@ def test_speak_request_defaults() -> None:
     s = SpeakRequest(text="hi")
     assert s.priority == "result"
     assert s.interrupt is False
+
+
+def test_task_state_covers_the_m4_state_machine() -> None:
+    """TaskState (§3.12 task classes): live states + the three terminal ones."""
+    assert get_args(TaskState) == (
+        "pending", "waiting", "running", "paused", "completed", "failed", "cancelled",
+    )
+    assert get_origin(TaskState) is Literal
