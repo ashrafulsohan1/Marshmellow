@@ -130,6 +130,42 @@ tasks dashboard UI, **foreground lease** protocol, task persistence across resta
 **E2E:** "watch this channel and tell me when they upload" → later, unprompted spoken report; task visible/pausable in UI.
 **DoD:** background tasks never synthesize input without a lease (test-enforced); monitor survives app restart; false-positive report rate acceptable on a 24 h soak.
 
+**M4 evidence:** the monitor framework (all four kinds), jittered scheduler,
+TaskManager task classes, foreground lease, `create_task` path, persistence and
+dashboard are test-enforced headless — `tests/tasks/` (61 tests: monitors per kind
+over httpx `MockTransport`, jitter bounds, one-shot trigger semantics, baseline
+anti-re-report across restart, lease denial fail-closed, persist/restore paths,
+dashboard view) — full suite **393 passed, 17 deselected** · `ruff check .` clean ·
+`mypy` strict clean at `8d7be04` (2026-11-07).
+
+**24 h soak** (`tools/soak_m4.py`, commit `8d7be04`): runs the REAL composition —
+`App(headless=True)` → TaskManager → `make_check` → jittered scheduler, real
+clock — against a file-backed fixture feed with scheduled intended changes (≥ 3
+poll intervals apart, ≥ 10 % unchanged tail); monitors are one-shot, so the
+harness re-arms per trigger and seals each re-arm baseline in the ledger (a
+change consumed that way is accounted, not missing). Every TaskEvent lands as a
+JSONL row `{at, task, changed, ok, summary, error}`; the summary counts triggers,
+check errors and **false-positive candidates = fixture triggers whose source hash
+was already credited (triggers on unchanged content)**. Smoke proof at soak scale
+(`--hours 0.01`, three variants: fixture-only, `--feed <file>`, `--feed
+http://127.0.0.1` rss): intended changes == triggers credited, 0 false positives,
+verdict PASS.
+
+**Soak verdict: PENDING** — the 24 h run (`--hours 24 --interval-s 300`, fixture
+feed) launched 2026-11-07T00:45:58, completes 2026-11-08T00:45:58 (~288 checks, 6
+intended changes; report `soak_report.jsonl` + `mutations.jsonl` in the run dir).
+This block is updated with the final summary — trigger count / error count /
+false-positive report rate — when the run completes.
+
+**Task 7 Step 4 — the assisted/manual M4 checklist — is the remaining user-physical
+step** → [pending-user-verifications.md](pending-user-verifications.md) (BYOK live
++ "watch this channel" → unprompted spoken report; dashboard pause/resume/delete on
+the real screen; live lease consent no→refused / yes→opens; kill switch with a
+monitor running; restart persistence with no duplicate report).
+
+Commits `08da7d3…8d7be04` (Tasks 1–7 in their own `feat:`/`fix:`/`test:` commits —
+see git log; Task 7 adds the soak harness + this evidence `docs:` commit).
+
 ### M5 — Polish & harden (size: M)
 **Goal:** daily-drivable, resilient, installable.
 **Scope:** local LLM adapter tuned (Ollama vision model benchmark), error recovery & retry UX, installer

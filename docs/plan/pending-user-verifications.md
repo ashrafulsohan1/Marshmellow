@@ -77,6 +77,40 @@ then delete this entry. The headless proof of the same behaviors is the
 `pytest -m scenario` suite (48 tests) — see the M3 evidence block for the
 per-step latency FYI table (`tools/latency_m3.py`).
 
+## M4 Task 7 Step 4 — assisted/manual M4 checklist (user-physical)
+
+**Deferred from:** M4 plan Task 7 Step 4 — the whole checklist needs a human
+speaking, listening, and watching the real screen, discharged in ONE session;
+everything automatable around it is already implemented and gated (monitor
+framework, one-shot triggers, baseline anti-re-report, foreground lease,
+persistence, dashboard and `create_task` covered headless by `tests/tasks/` —
+61 tests — plus the M4 soak harness `tools/soak_m4.py`). Wake word caveat from
+the M2/M3 entries still applies until the self-trained model exists (D8/OQ-1):
+"hey marshmellow" = after wake, or hotkey-held (hold **ctrl+shift+m**) where the
+wake model isn't trained yet. Start the app with `uv run python -m marshmellow`.
+
+**Run** (outcomes recorded verbatim below each step):
+
+1. **BYOK stored (D7)** so the cloud planner is live: `uv run python -m
+   marshmellow.tools.set_key`, then set `[providers.llm]` kind/base_url/model in
+   `%LOCALAPPDATA%/Marshmellow/config.toml`. Then, assisted: **"hey marshmellow —
+   watch this channel and tell me when they upload"** → monitor appears in the
+   dashboard; later, **unprompted spoken report** "new upload: …" (the M4 E2E).
+   Outcome: ____________
+2. **Dashboard on the real screen:** tray → Open Marshmellow → task visible;
+   **Pause** → no reports; **Resume**; **Delete**. Outcome: ____________
+3. **Live lease consent:** scheduled task (**"in one minute, open Calculator"**)
+   → spoken "I need the screen to … — OK?" → answer **"no"** → refused, nothing
+   opens; repeat with **"yes"** → opens with a visible trace. Outcome: ____________
+4. **Kill switch live with a monitor running:** **"stop everything"** → monitor
+   cancelled, no further reports. Outcome: ____________
+5. **Restart persistence live:** create a monitor → quit → relaunch → still
+   listed, **no duplicate report**. Outcome: ____________
+
+**Done when:** all five outcomes are recorded verbatim in this block and then
+copied into the M4 evidence block in [02-milestones.md](02-milestones.md);
+then delete this entry.
+
 ## Carry-over (lower priority, not blocking M2 DoD)
 
 - **Live-mic wake false-accept soak** (SP3 "Limitations", planned for M2): ≥ 1 h of
