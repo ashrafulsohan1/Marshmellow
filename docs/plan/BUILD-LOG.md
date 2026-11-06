@@ -1,6 +1,6 @@
 # Marshmellow — Autonomous Build Log
 
-**Snapshot:** 2026-11-06 · **Builder run:** `dwfrun-71b6a13e-9fb6-48b7-8d7b-f67afa1961e7` (supersedes `dwfrun-da24d2ea`, cache-imported) · **Watchdog:** cron every 20 min, `automation-4c2ecbe4` (pause-safe protocol)
+**Snapshot:** 2026-11-06 · **Builder run:** `dwfrun-71b6a13e-9fb6-48b7-8d7b-f67afa1961e7` (supersedes `dwfrun-da24d2ea`, cache-imported) · **Watchdog: REMOVED by user 2026-11-06 — resumption is manual**
 
 ## Milestone ledger
 
@@ -20,7 +20,7 @@ Three layers, so a quota pause costs nothing and resumes itself:
 
 1. **Journal replay (same-lineage resume).** On a quota stop, `ResumeWorkflowRun` replays every settled step at zero tokens and re-dispatches only the in-flight ask. Requirement: the script file stays byte-identical — **no edits of any kind during a pause** (personas are cache keys; the 2026-11-05 persona edit caused a ~3M-token re-walk).
 2. **Repo-as-state ledger.** From M4-T4 on, every builder appends `{"milestone", "task", "commit"}` to `docs/plan/build-ledger.jsonl` inside its task commit. The script merges the ledger into its skip-lists at runtime, so even a **brand-new run after a dead session** starts live at the right task — no stale hardcoded `doneIds`, no `already_done` re-walks.
-3. **Watchdog cron (recreated, hardened).** Every 20 min: running → one-line status; completed → verify the GitHub release, then pause itself; quota stop → resume immediately (retry each cycle until quota returns); script error → refresh skip-lists from ledger + git log, then `AmendWorkflow`; user stop → report, never resume.
+3. **Watchdog: removed by the user (2026-11-06).** Resumption is therefore **manual**: when quota returns, say "continue" in the session or run `ResumeWorkflowRun("dwfrun-71b6a13e-9fb6-48b7-8d7b-f67afa1961e7")`. The journal replay + ledger make that a one-step, zero-rework operation. If a future run errors on script bugs: refresh `doneIds`/`alreadyVerified` from the ledger + git log, then `AmendWorkflow` — never edit during a quota pause.
 
 ## Notable events
 
