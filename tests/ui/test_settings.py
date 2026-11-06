@@ -8,18 +8,19 @@ or %LOCALAPPDATA%.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QStandardItemModel  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
 from marshmellow.core.bus import EventBus  # noqa: E402
-from marshmellow.core.config import Settings  # noqa: E402
+from marshmellow.core.config import SafetyConfig, Settings  # noqa: E402
 from marshmellow.core.contracts import TaskState  # noqa: E402
 from marshmellow.tasks.manager import TaskHandle  # noqa: E402
 from marshmellow.ui import settings_dialog as settings_dialog_mod  # noqa: E402
@@ -146,6 +147,53 @@ def test_autostart_not_toggled_when_already_in_requested_state(
     assert dialog._settings.autostart is True
 
 
+# -- §3.13 preset: escalate, never lower (Global Constraint, M5 plan:36-38) ------------
+
+
+def test_preset_cannot_be_lowered(qapp: QApplication, product_config: Path) -> None:
+    """A lower preset is refused on Save: nothing persisted, on_saved unfired."""
+    saved: list[Settings] = []
+    settings = Settings()  # standard — the floor this dialog may not go below
+    dialog = SettingsDialog(
+        settings,
+        apply_autostart=lambda enabled: enabled,
+        autostart_state=lambda: False,
+        on_saved=saved.append,
+    )
+    assert _preset_item_enabled(dialog, "relaxed") is False  # disabled in the popup
+    assert _preset_item_enabled(dialog, "strict") is True  # escalation stays open
+    dialog.safety_combo.setCurrentText("relaxed")  # setCurrentIndex ignores the flag
+    _click(dialog, "settings-save")
+    assert dialog.error_label.text() != ""  # the refusal is explained
+    assert saved == []  # on_saved never fired
+    assert not product_config.exists()  # nothing persisted
+    assert settings.safety.preset == "standard"  # the floor holds
+
+
+def test_strict_floor_disables_both_lower_preset_items(qapp: QApplication) -> None:
+    """A strict-configured dialog can only stay strict — lower items are locked."""
+    dialog = SettingsDialog(
+        Settings(safety=SafetyConfig(preset="strict")),
+        apply_autostart=lambda enabled: enabled,
+        autostart_state=lambda: False,
+    )
+    assert _preset_item_enabled(dialog, "relaxed") is False
+    assert _preset_item_enabled(dialog, "standard") is False
+    assert _preset_item_enabled(dialog, "strict") is True
+
+
+def test_relaxed_floor_leaves_everything_selectable(qapp: QApplication) -> None:
+    """The lowest preset is no floor at all: standard and strict stay open."""
+    dialog = SettingsDialog(
+        Settings(safety=SafetyConfig(preset="relaxed")),
+        apply_autostart=lambda enabled: enabled,
+        autostart_state=lambda: False,
+    )
+    assert _preset_item_enabled(dialog, "relaxed") is True
+    assert _preset_item_enabled(dialog, "standard") is True
+    assert _preset_item_enabled(dialog, "strict") is True
+
+
 # -- dashboard "Settings…" button -------------------------------------------------------
 
 
@@ -185,3 +233,13 @@ def _click(dialog: SettingsDialog, button_name: str) -> None:
     button = dialog.findChild(QPushButton, button_name)
     assert button is not None, f"missing button {button_name}"
     QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+
+
+def _preset_item_enabled(dialog: SettingsDialog, preset: str) -> bool:
+    """Whether the preset is selectable in the combo popup (item flag, M5 fix)."""
+    combo = dialog.safety_combo
+    idx = combo.findText(preset)
+    assert idx >= 0, f"preset {preset!r} not in the combo"
+    item = cast(QStandardItemModel, combo.model()).item(idx)
+    assert item is not None
+    return item.isEnabled()

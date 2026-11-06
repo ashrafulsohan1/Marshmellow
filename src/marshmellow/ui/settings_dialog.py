@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
+from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -36,6 +37,13 @@ from marshmellow.core.contracts import ActivationMode
 logger = logging.getLogger(__name__)
 
 Preset = Literal["relaxed", "standard", "strict"]
+
+#: §3.13 strictness ranking. The Global Constraint (M5 plan) allows this dialog
+#: to escalate the preset, NEVER lower it — items below the configured preset
+#: are disabled in the popup, and `_on_save` refuses them again (belt and
+#: braces: `RiskPolicy` only max-escalates per-kind overrides, it never
+#: constrains the preset itself, so this guard lives here).
+_PRESET_RANK: Final[dict[str, int]] = {"relaxed": 0, "standard": 1, "strict": 2}
 
 
 class SettingsDialog(QDialog):
@@ -81,12 +89,21 @@ class SettingsDialog(QDialog):
         self.autostart_check.setChecked(autostart_state())
         form.addRow("Autostart", self.autostart_check)
 
-        # -- §3.13 preset: persist-only; may escalate, never lowers (RiskPolicy) -------
+        # -- §3.13 preset: persist-only; the Global Constraint (M5 plan) lets the
+        #    dialog ESCALATE it, never lower it — items below the persisted preset
+        #    are disabled in the popup and Save refuses them again.
         self.safety_combo = QComboBox(self)
         self.safety_combo.setObjectName("settings-safety")
         for preset in ("relaxed", "standard", "strict"):
             self.safety_combo.addItem(preset)
         self.safety_combo.setCurrentText(settings.safety.preset)
+        self._preset_floor = _PRESET_RANK[settings.safety.preset]
+        self._preset_floor_name = settings.safety.preset
+        safety_model = cast(QStandardItemModel, self.safety_combo.model())
+        for preset, rank in _PRESET_RANK.items():
+            item = safety_model.item(self.safety_combo.findText(preset))
+            if item is not None:
+                item.setEnabled(rank >= self._preset_floor)
         form.addRow("Safety preset", self.safety_combo)
 
         # -- API key replace (D7) --------------------------------------------------------
@@ -122,7 +139,15 @@ class SettingsDialog(QDialog):
             return  # the live error label explains; nothing is mutated or saved
         self._settings.activation = cast(ActivationMode, self.activation_combo.currentText())
         self._settings.hotkey = self.hotkey_edit.text().strip()
-        self._settings.safety.preset = cast(Preset, self.safety_combo.currentText())
+        selected_preset = self.safety_combo.currentText()
+        if _PRESET_RANK[selected_preset] < self._preset_floor:
+            message = (
+                f"the safety preset can escalate, never lower "
+                f"(configured: {self._preset_floor_name})"
+            )
+            self.error_label.setText(message)
+            return  # the floor holds: nothing is mutated, saved, or announced
+        self._settings.safety.preset = cast(Preset, selected_preset)
         key = self.key_edit.text().strip()
         if key:
             try:

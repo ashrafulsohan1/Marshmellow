@@ -138,9 +138,10 @@ Credential Manager, the HKCU Run key.
    NO wizard (config exists now). Outcome: ____________
 3. **Settings dialog live:** tray → Open Marshmellow → "Settings…" → set the hotkey
    to `notakey` → the error shows live and Save refuses; set a valid combo + strict
-   preset → Save closes and updates config.toml. With the dialog still open, run a
-   task needing confirmation → the spoken/tray confirm fallback still fires (nested
-   event loop). Restart → the new hotkey works. Outcome: ____________
+   preset → Save closes and updates config.toml; reopen → the lower preset items
+   (relaxed/standard) are locked out — escalate only, never lower. With the dialog
+   still open, run a task needing confirmation → the spoken/tray confirm fallback
+   still fires (nested event loop). Restart → the new hotkey works. Outcome: ____________
 
 **Done when:** all three outcomes are recorded verbatim in this block and copied
 into the M5 evidence block in [02-milestones.md](02-milestones.md); then delete
