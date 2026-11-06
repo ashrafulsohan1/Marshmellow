@@ -4,10 +4,17 @@ The provider speaks Ollama's NATIVE `/api/chat` dialect: images travel as a
 raw-base64 `images` list on the message, tool-call arguments are a JSON OBJECT
 (never OpenAI's string), `stream:false`, one POST per turn. Non-2xx raises
 `httpx.HTTPStatusError` (the retryable predicate upstream consumes it).
+
+One test uses a REAL loopback HTTP server instead of MockTransport: the pool
+is exactly what MockTransport bypasses, and the loop-binding defect (M5 T1
+review fix) lived in the pool.
 """
 
+import asyncio
 import json
 import logging
+import threading
+from collections.abc import Iterator
 
 import httpx
 import pytest
@@ -16,6 +23,7 @@ from marshmellow.app import App
 from marshmellow.core.config import Settings
 from marshmellow.core.contracts import LLMMessage, LLMRequest, LLMToolCall
 from marshmellow.llm.ollama import DEFAULT_OLLAMA_URL, OllamaProvider
+from marshmellow.llm.openai_compat import OpenAICompatProvider
 from marshmellow.planner.fake import FakePlanner
 from marshmellow.planner.orchestrator import LLMPlanner
 
@@ -161,14 +169,46 @@ def _headless_app(settings: Settings, tmp_path) -> App:
     )
 
 
-def test_composition_ollama_kind_wires_provider_and_vision(tmp_path) -> None:
+def test_composition_ollama_kind_wires_dedicated_vision_provider(tmp_path) -> None:
+    """M5 T1 review fix: vision gets its OWN provider instance, never the planner's.
+
+    The planner drives its provider from the resident llm-planner-loop while
+    VisionPerceiver drives its own from the vision-provider-loop — and httpx
+    pools are loop-bound, so one shared instance would fail the second user's
+    first pooled call (the D5 fallback would never survive a planner turn).
+    """
     app = _headless_app(_ollama_settings(), tmp_path)
     try:
-        provider = app._providers.planner
-        assert isinstance(provider, OllamaProvider)
-        # the D5 vision fallback shares the vision-capable planner provider
-        assert app._providers.vision is provider
+        planner = app._providers.planner
+        assert isinstance(planner, OllamaProvider)
+        vision = app._providers.vision
+        assert isinstance(vision, OllamaProvider)
+        assert vision is not planner  # dedicated client/pool per resident loop
+        # the perceiver actually got the dedicated instance, not the planner's
+        assert app.perception._vision is not None
+        assert app.perception._vision._provider is vision
         assert isinstance(app.planner, LLMPlanner)
+    finally:
+        app.stop()
+
+
+def test_composition_openai_compat_vision_wires_dedicated_instance(tmp_path) -> None:
+    """The dedicated-instance rule holds for the cloud vision fallback too."""
+    settings = Settings()
+    settings.providers.llm.kind = "openai_compat"
+    settings.providers.llm.base_url = "https://api.example.com/v1"
+    settings.providers.llm.model = "vision-model"
+    settings.providers.llm.vision = True
+    app = _headless_app(settings, tmp_path)
+    try:
+        planner = app._providers.planner
+        assert isinstance(planner, OpenAICompatProvider)
+        vision = app._providers.vision
+        assert isinstance(vision, OpenAICompatProvider)
+        assert vision is not planner
+        assert vision.capabilities.vision is True
+        assert app.perception._vision is not None
+        assert app.perception._vision._provider is vision
     finally:
         app.stop()
 
@@ -197,3 +237,88 @@ def test_composition_ollama_without_model_falls_back_to_fake(
         assert any("model" in r.getMessage() for r in caplog.records)
     finally:
         app.stop()
+
+
+# -- the loop-binding mechanism itself (real sockets; MockTransport can't see it)
+
+
+@pytest.fixture()
+def chat_server() -> Iterator[str]:
+    """A local keep-alive /api/chat server — the POOL is what binds to a loop."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    body = json.dumps(
+        {
+            "model": "test-model",
+            "created_at": "2026-11-07T00:00:00Z",
+            "message": {"role": "assistant", "content": "ok"},
+            "done": True,
+            "done_reason": "stop",
+        }
+    ).encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"  # keep-alive: the pool actually pools
+
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+def _resident_loop(name: str) -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
+    """Mimics orchestrator._ensure_loop / vision._ensure_loop: one alive loop."""
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, name=name, daemon=True)
+    thread.start()
+    return loop, thread
+
+
+def test_one_provider_instance_cannot_serve_two_resident_loops(chat_server) -> None:
+    """The mechanism behind the M5 T1 review fix, at real-socket level.
+
+    One shared provider instance: the planner loop's first turn binds the
+    pool, and the vision loop's first turn then hangs or raises (observed
+    shapes: pool deadlock → TimeoutError, or RuntimeError "bound to a
+    different event loop"). One DEDICATED instance per loop works — which is
+    what _build_providers must keep building.
+    """
+    req = LLMRequest(messages=[LLMMessage(role="user", content="hi")])
+
+    async def one_turn(provider: OllamaProvider) -> str:
+        return (await provider.complete(req)).text
+
+    planner_loop, planner_thread = _resident_loop("test-planner-loop")
+    vision_loop, vision_thread = _resident_loop("test-vision-loop")
+    try:
+        shared = OllamaProvider(base_url=chat_server, model="test-model")
+        first = asyncio.run_coroutine_threadsafe(one_turn(shared), planner_loop)
+        assert first.result(30) == "ok"  # planner's first HTTP turn binds the pool
+
+        second = asyncio.run_coroutine_threadsafe(one_turn(shared), vision_loop)
+        with pytest.raises((RuntimeError, TimeoutError)):
+            second.result(10)  # pool bound to the planner loop → hang or loop error
+
+        # the composition fix: a dedicated instance per resident loop
+        vision_provider = OllamaProvider(base_url=chat_server, model="test-model")
+        replan = asyncio.run_coroutine_threadsafe(one_turn(shared), planner_loop)
+        assert replan.result(30) == "ok"  # planner loop still healthy
+        on_vision = asyncio.run_coroutine_threadsafe(one_turn(vision_provider), vision_loop)
+        assert on_vision.result(30) == "ok"  # dedicated instance serves the vision loop
+    finally:
+        planner_loop.call_soon_threadsafe(planner_loop.stop)
+        vision_loop.call_soon_threadsafe(vision_loop.stop)
+        planner_thread.join(timeout=5)
+        vision_thread.join(timeout=5)

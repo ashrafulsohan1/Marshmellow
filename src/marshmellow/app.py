@@ -18,8 +18,9 @@ M4: the TaskManager carries the D6 foreground lease (`self.lease`, same
 fail-closed ConfirmFlow as the gate), so background modes must win spoken
 consent before any non-read action reaches the executor.
 M5: `_build_providers` builds the D7 LLM provider and the D5 vision provider
-(the planner provider itself when its caps claim vision) BEFORE perception —
-`_build_perception` wires the SoM `VisionPerceiver` from it, or runs UIA-only.
+(a dedicated instance when the planner provider's caps claim vision) BEFORE
+perception — `_build_perception` wires the SoM `VisionPerceiver` from it, or
+runs UIA-only.
 """
 
 from __future__ import annotations
@@ -134,8 +135,11 @@ class _Providers(NamedTuple):
 
     `planner` is the LLM behind the planner — None for `kind="fake"` (and for
     an ollama config without a model), which falls back to FakePlanner.
-    `vision` is the D5 SoM fallback provider: the planner provider itself iff
-    its caps claim vision — never the fake planner.
+    `vision` is the D5 SoM fallback provider — a DEDICATED instance (own HTTP
+    client, same model config) whenever the planner provider's caps claim
+    vision, never the planner instance itself: the planner loop and the
+    vision-provider loop are two resident loops and HTTP pools are loop-bound
+    (M5 T1 review fix).
     """
 
     planner: LLMProvider | None
@@ -215,7 +219,7 @@ class App:
             self._open_ui_marshal = GuiMarshal(self._open_dashboard)
             self.bus.subscribe(TrayAction, self._on_tray_action)
         # The providers come first: perception needs the D5 vision provider,
-        # and the planner wraps the same LLM below (§3.4, M5 T1).
+        # and the planner is built from _Providers.planner below (§3.4, M5 T1).
         self._providers = self._build_providers()
         self.perception = perception if perception is not None else self._build_perception()
         self.action_layer = (
@@ -355,9 +359,9 @@ class App:
     def _build_perception(self) -> ScreenPerceptionLike:
         """Real UIA stack: settle-poll reader + the shared registry (§3.6).
 
-        The D5 SoM vision fallback is wired from `_Providers.vision` (the
-        vision-capable planner provider, M5 T1); without one, `snapshot`
-        degrades to a UIA-only walk, never an error.
+        The D5 SoM vision fallback is wired from `_Providers.vision` — a
+        dedicated provider instance for the vision loop (M5 T1); without one,
+        `snapshot` degrades to a UIA-only walk, never an error.
         """
         from marshmellow.perception.snapshot import ScreenPerception
         from marshmellow.perception.uia_reader import UIAReader
@@ -438,12 +442,18 @@ class App:
     def _build_providers(self) -> _Providers:
         """D4/D5 (§3.4): build the planner LLM + the vision provider once.
 
-        `vision` = the planner provider itself iff its caps claim vision — a
+        `vision` is a DEDICATED provider instance (same model config, own HTTP
+        client) whenever the planner provider's caps claim vision — a
         vision-capable cloud model (`[providers.llm].vision`, D5) or the local
-        ollama model (vision-capable by contract, D4). The fake planner never
-        serves vision: `kind="fake"` (and ollama without a model) stays
-        UIA-only. Providers are built BEFORE perception so the SoM fallback
-        can share the same LLM (see `__init__` ordering).
+        ollama model (vision-capable by contract, D4) — and None otherwise
+        (`kind="fake"`, ollama without a model): the fake planner never serves
+        vision. The instance must be dedicated, never the planner's: the
+        planner drives its provider from the resident llm-planner-loop
+        (orchestrator `_ensure_loop`) while VisionPerceiver drives its own
+        from the vision-provider-loop, and HTTP pools are loop-bound — a
+        shared instance deadloops/fails its second user's first pooled call
+        (M5 T1 review fix). Providers are built BEFORE perception so the SoM
+        fallback is wired from `_Providers.vision` (see `__init__` ordering).
         """
         cfg = self.settings.providers.llm
         if cfg.kind == "ollama":
@@ -455,13 +465,16 @@ class App:
                 return _Providers(planner=None, vision=None)
             from marshmellow.llm.ollama import DEFAULT_OLLAMA_URL, OllamaProvider
 
-            provider: LLMProvider = OllamaProvider(
-                base_url=cfg.base_url or DEFAULT_OLLAMA_URL, model=cfg.model
-            )
+            url = cfg.base_url or DEFAULT_OLLAMA_URL
+            provider: LLMProvider = OllamaProvider(base_url=url, model=cfg.model)
             logger.info("LLM provider: ollama (model=%s)", cfg.model)
             return _Providers(
                 planner=provider,
-                vision=provider if provider.capabilities.vision else None,
+                vision=(
+                    OllamaProvider(base_url=url, model=cfg.model)  # own client — vision loop
+                    if provider.capabilities.vision
+                    else None
+                ),
             )
         if cfg.kind == "openai_compat":
             from marshmellow.llm.openai_compat import OpenAICompatProvider
@@ -475,7 +488,16 @@ class App:
             logger.info("LLM provider: openai_compat (model=%s)", cfg.model)
             return _Providers(
                 planner=provider,
-                vision=provider if provider.capabilities.vision else None,
+                vision=(
+                    OpenAICompatProvider(
+                        base_url=cfg.base_url,
+                        model=cfg.model,
+                        get_key=secrets.load_api_key,
+                        vision=cfg.vision,
+                    )
+                    if provider.capabilities.vision
+                    else None
+                ),
             )
         return _Providers(planner=None, vision=None)  # kind == "fake"
 
