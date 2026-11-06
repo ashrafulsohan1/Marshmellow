@@ -4,6 +4,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +22,7 @@ from marshmellow.planner.fake import FakePlanner
 from marshmellow.tasks.foreground import ForegroundLease
 from marshmellow.tasks.manager import BACKGROUND_MODES, Executor, TaskManager
 from marshmellow.tasks.monitors import CheckResult, MonitorCheck
+from marshmellow.tasks.store import StoredTask, TaskStore
 
 
 class GrantedConfirmer:
@@ -243,6 +245,7 @@ def _background_manager(
     clock: FakeClock,
     sleeper: RecordingSleeper,
     lease: ForegroundLease | None = None,
+    store: TaskStore | None = None,
 ) -> TaskManager:
     """Full seam set: FakeClock, recording sleeper, scripted checks, fixed rng=0.0."""
 
@@ -262,6 +265,7 @@ def _background_manager(
         sleeper=sleeper,
         check_factory=factory,
         lease=lease,
+        store=store,
     )
 
 
@@ -563,5 +567,184 @@ async def test_register_with_unparseable_monitor_target_raises_and_registers_not
         manager.register(bad)
 
     assert manager.list_tasks() == [], "a failed registration must not register anything"
+    manager.stop()
+    bus.stop()
+
+
+# ---------------------------------------------------------------------------
+# M4 Task 5: persistence across restart (baselines travel with tasks)
+# ---------------------------------------------------------------------------
+
+
+def _changed(value: str, summary: str = "the watched page changed") -> CheckResult:
+    return CheckResult(ok=True, value=value, changed=True, summary=summary)
+
+
+def _store(tmp_path: Path) -> TaskStore:
+    return TaskStore(tmp_path / "tasks.json")
+
+
+async def test_restart_does_not_re_report(tmp_path: Path) -> None:
+    """The flagship anti-re-report property (M4 review focus #2): one check on
+    run 1 captures the baseline and the store records it; a NEW manager on the
+    SAME store + restore() seeds that baseline into the first check — so the
+    first post-restart check COMPARES (never re-captures), an unchanged page
+    emits nothing, and a later real change emits exactly one result."""
+    store = _store(tmp_path)
+    check = ScriptedCheck([_unchanged("v1"), _unchanged("v1"), _changed("v2")])
+
+    # -- run 1: exactly one check (the test drives the clock), then graceful stop --
+    clock1 = FakeClock()
+    sleeper1 = RecordingSleeper(clock1)
+    sleeper1.advance_ratio = 0.0
+    bus1 = EventBus()
+    manager1 = _background_manager(bus1, [], {_URL: check}, clock1, sleeper1, store=store)
+
+    manager1.register(_monitor_spec("m1"))
+    h1 = manager1.handle("m1")
+    assert h1 is not None
+    await _until(lambda: h1.state == "waiting")
+    assert check.baselines == [None], "run 1's first check captured the baseline"
+    rows = store.load()
+    assert [r.spec.id for r in rows] == ["m1"]
+    assert rows[0].baseline == "v1", "the anti-re-report record reached the store"
+    manager1.stop()
+    bus1.stop()
+
+    # -- run 2: restore() carries the baseline into the first check --
+    events2: list[TaskEvent] = []
+    bus2 = EventBus()
+    bus2.subscribe(TaskEvent, events2.append)
+    clock2 = FakeClock()
+    sleeper2 = RecordingSleeper(clock2)
+    sleeper2.advance_ratio = 0.0
+    manager2 = _background_manager(bus2, [], {_URL: check}, clock2, sleeper2, store=store)
+
+    assert manager2.restore() == 1
+    h2 = manager2.handle("m1")
+    assert h2 is not None and h2.baseline == "v1", "the stored baseline traveled"
+    await _until(lambda: h2.state == "waiting")
+    assert check.baselines == [None, "v1"], (
+        "the first post-restart check COMPARED (baseline passed in), never re-captured"
+    )
+    assert not [e for e in events2 if e.task_id == "m1" and e.type == "result"], (
+        "an unchanged page must not re-report after the restart"
+    )
+
+    clock2.advance(4000)  # the next due instant passes: a real change fires exactly once
+    await _until(lambda: h2.state == "completed")
+    assert check.baselines == [None, "v1", "v1"]
+    assert [e.type for e in events2 if e.task_id == "m1"] == ["started", "result"]
+    assert store.load() == [], "a completed task is not restored on the next restart"
+    manager2.stop()
+    bus2.stop()
+
+
+async def test_completed_and_cancelled_not_persisted(tmp_path: Path) -> None:
+    """Pinned convention: terminal tasks are not persisted — a completed
+    monitor's row is dropped when it triggers, a cancelled one's when the
+    control op lands."""
+    store = _store(tmp_path)
+    clock = FakeClock()
+    sleeper = RecordingSleeper(clock)
+    check_done = ScriptedCheck([_unchanged("v1"), _changed("v2")])
+    check_gone = ScriptedCheck([_unchanged("v1")])
+    bus = EventBus()
+    manager = _background_manager(
+        bus, [], {"http://done": check_done, "http://gone": check_gone}, clock, sleeper,
+        store=store,
+    )
+
+    def spec(task_id: str, target: str, interval_s: int) -> TaskSpec:
+        return TaskSpec(
+            id=task_id,
+            instruction="watch",
+            mode="background_monitor",
+            monitor=MonitorSpec(
+                kind="url_diff", target=target, interval_s=interval_s, condition="c"
+            ),
+        )
+
+    manager.register(spec("done", "http://done", 60))
+    h_done = manager.handle("done")
+    assert h_done is not None
+    await _until(lambda: h_done.state == "completed")
+    assert store.load() == [], "completed → row dropped"
+
+    manager.register(spec("gone", "http://gone", 100000))
+    h_gone = manager.handle("gone")
+    assert h_gone is not None
+    await _until(lambda: h_gone.state == "waiting")
+    assert [r.spec.id for r in store.load()] == ["gone"], "only the live task is stored"
+
+    assert manager.control("gone", "cancel") is True
+    await _until(lambda: h_gone.state == "cancelled")
+    assert store.load() == [], "cancelled → row dropped"
+    manager.stop()
+    bus.stop()
+
+
+async def test_restore_registers_scheduled_task(tmp_path: Path) -> None:
+    """A stored scheduled row is re-registered at restore: next_due is the
+    stored schedule, a future schedule does not run at startup, and the row is
+    re-persisted by the registration itself."""
+    store = _store(tmp_path)
+    schedule = datetime(2026, 11, 7, 9, 0, 0)  # NOW is 2026-11-06 12:00 — future
+    store.save(
+        [
+            StoredTask(
+                spec=TaskSpec(
+                    id="s1", instruction="open notepad", mode="scheduled", schedule=schedule
+                ),
+                baseline=None,
+                state="waiting",
+            )
+        ]
+    )
+
+    clock = FakeClock()
+    sleeper = RecordingSleeper(clock)
+    sleeper.advance_ratio = 0.0
+    bus = EventBus()
+    executed: list[ActionRequest] = []
+    manager = _background_manager(bus, executed, {}, clock, sleeper, store=store)
+
+    assert manager.restore() == 1
+    h = manager.handle("s1")
+    assert h is not None
+    await _until(lambda: h.state == "waiting")
+    assert h.next_due == schedule
+    assert executed == [], "a future schedule must not run at restore"
+    assert [r.spec.id for r in store.load()] == ["s1"], "restore re-persisted the row"
+    manager.stop()
+    bus.stop()
+
+
+async def test_restore_preserves_paused(tmp_path: Path) -> None:
+    """A stored 'paused' row comes back paused: the loop parks (no checks even
+    when the clock runs past due), resume() applies, and the baseline still
+    traveled into the first check."""
+    store = _store(tmp_path)
+    check = ScriptedCheck([_unchanged("v1")])
+    store.save([StoredTask(spec=_monitor_spec("m1"), baseline="v1", state="paused")])
+
+    clock = FakeClock()
+    sleeper = RecordingSleeper(clock)
+    sleeper.advance_ratio = 0.0
+    bus = EventBus()
+    manager = _background_manager(bus, [], {_URL: check}, clock, sleeper, store=store)
+
+    assert manager.restore() == 1
+    h = manager.handle("m1")
+    assert h is not None
+    await _until(lambda: len(check.baselines) == 1)
+    assert check.baselines == ["v1"], "the first check compared against the stored baseline"
+    await _until(lambda: h.state == "paused")
+    assert [r.state for r in store.load()] == ["paused"], "the pause reached the store"
+
+    clock.advance(4000)
+    await asyncio.sleep(0.05)
+    assert len(check.baselines) == 1, "a restored-paused monitor must not check"
+    assert manager.control("m1", "resume") is True, "the pause is real (resume applies)"
     manager.stop()
     bus.stop()

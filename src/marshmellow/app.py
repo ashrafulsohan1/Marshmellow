@@ -66,6 +66,7 @@ from marshmellow.planner.fake import FakePlanner
 from marshmellow.planner.tools import ScreenToolbox
 from marshmellow.stt.fake import FakeSTT
 from marshmellow.tasks.manager import BACKGROUND_MODES, Planner, TaskHandle, TaskManager
+from marshmellow.tasks.store import TaskStore, default_task_store_path
 from marshmellow.tts.fake import FakeTTS
 from marshmellow.ui.tray import GuiMarshaledConfirm, TrayAction
 
@@ -165,6 +166,7 @@ class App:
         gate: GateLike | None = None,
         ask_channel: AskChannelLike | None = None,
         planner: Planner | None = None,
+        task_store_path: Path | None = None,
     ) -> None:
         self.settings = settings
         self.headless = headless
@@ -199,8 +201,17 @@ class App:
         self.toolbox = ScreenToolbox(self.perception, self.registry, self._execute)
         self.planner = planner if planner is not None else self._build_planner(settings)
         self.lease = self._build_lease()  # D6: consented screen access (§3.12)
+        # M4 T5 (§3.15): background tasks + baselines persist across restart.
+        self.task_store_path = (
+            task_store_path if task_store_path is not None else default_task_store_path()
+        )
+        self.task_store = TaskStore(self.task_store_path)
         self.manager = TaskManager(
-            bus=self.bus, planner=self.planner, execute=self._execute, lease=self.lease
+            bus=self.bus,
+            planner=self.planner,
+            execute=self._execute,
+            lease=self.lease,
+            store=self.task_store,
         )
         self.audio_engine: AudioEngine | None = audio_engine
         if self.audio_engine is None and not headless:
@@ -227,6 +238,7 @@ class App:
         if self.wake_watcher is not None:
             self.wake_watcher.start()
         self.manager.start()  # resident loop for background tasks (§3.12, M4)
+        self.manager.restore()  # baselines travel with tasks across restart (§3.15, M4 T5)
         logger.info("Marshmellow %s started (headless=%s)", __version__, self.headless)
 
     def stop(self) -> None:

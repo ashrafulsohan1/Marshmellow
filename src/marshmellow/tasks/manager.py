@@ -30,6 +30,16 @@ M4 T3 adds the §3.12 D6 foreground lease: the per-turn executor seam
 mode's non-read action reaches the executor (and its safety gate); a refusal
 is an ``ActionResult(ok=False, error="lease_denied"/"lease_required")`` and
 the lease is released in the turn's ``finally``.
+
+M4 T5 adds persistence (§3.15): with a ``TaskStore`` injected, every
+persistable live task (``background_monitor``/``scheduled`` only — jobs die
+with the process, logged) is snapshotted after register, after every monitor
+check, and on every control op. ``restore()`` re-registers what a previous
+run left behind, seeding the stored baseline into the first check so a
+restart never re-reports. Terminal states are never persisted, and a
+graceful ``stop()`` deliberately leaves the rows alone — the tasks come back
+after restart; only an explicit cancel (control op / cancel_all / kill
+switch) removes them.
 """
 
 from __future__ import annotations
@@ -63,6 +73,7 @@ from marshmellow.core.contracts import (
 from marshmellow.tasks.foreground import READ_KINDS, ForegroundLease
 from marshmellow.tasks.monitors import MonitorCheck, make_check
 from marshmellow.tasks.scheduler import is_due, next_due
+from marshmellow.tasks.store import StoredTask, TaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +93,12 @@ _MAX_CHECK_ERRORS = 5
 #: Wait-phase sleep granularity: pause / run_now take effect within one chunk.
 _WAIT_CHUNK_S = 0.1
 
+#: Modes that survive a restart (pinned convention: jobs die with the process).
+_PERSISTED_MODES: frozenset[TaskMode] = frozenset({"background_monitor", "scheduled"})
+
+#: Live states — terminal tasks are dropped from the store at the next persist.
+_LIVE_STATES: frozenset[TaskState] = frozenset({"pending", "waiting", "running", "paused"})
+
 
 async def _default_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
@@ -95,6 +112,7 @@ class TaskHandle:
     last_check: datetime | None = None
     next_due: datetime | None = None
     error: str | None = None
+    baseline: str | None = None  # M4 T5: last seen check value — the persisted record
 
 
 class Planner(Protocol):
@@ -113,6 +131,7 @@ class TaskManager:
         sleeper: Callable[[float], Awaitable[None]] | None = None,  # default asyncio.sleep
         check_factory: Callable[[MonitorSpec], MonitorCheck] = make_check,
         lease: ForegroundLease | None = None,  # D6: consented screen access (§3.12)
+        store: TaskStore | None = None,  # M4 T5: persistence across restart (§3.15)
     ) -> None:
         self._bus = bus
         self._planner = planner
@@ -124,6 +143,8 @@ class TaskManager:
         )
         self._check_factory = check_factory
         self._lease = lease
+        self._store = store
+        self._persist_lock = threading.Lock()  # register runs on caller threads
         self._running: dict[str, asyncio.Task[TaskHandle]] = {}
         self._kills: dict[str, threading.Event] = {}
         self._current_id: str | None = None  # the most recently started turn
@@ -204,7 +225,7 @@ class TaskManager:
 
     # -- registration & control API (v2) -------------------------------------------
 
-    def register(self, spec: TaskSpec) -> TaskHandle:
+    def register(self, spec: TaskSpec, *, baseline: str | None = None) -> TaskHandle:
         """Register a BACKGROUND task and start its long-lived loop (ValueError otherwise).
 
         Thread-safe: the loop task is marshaled onto the resident loop, so this
@@ -217,6 +238,9 @@ class TaskManager:
         zombie (the caller, e.g. the create_task path, can still react). A
         tz-aware scheduled spec is normalized to the naive-local wall clock the
         clock seam produces (the loops compare against ``self._clock()``).
+        ``baseline`` is the stored anti-re-report record passed in by
+        ``restore()`` (M4 T5): it is on the handle BEFORE the loop is spawned,
+        so the first check compares instead of re-capturing.
         """
         if spec.mode not in BACKGROUND_MODES:
             raise ValueError(
@@ -245,7 +269,7 @@ class TaskManager:
                     update={"schedule": spec.schedule.astimezone().replace(tzinfo=None)}
                 )
         self.start()
-        handle = TaskHandle(spec=spec)
+        handle = TaskHandle(spec=spec, baseline=baseline)
         self._handles[spec.id] = handle
         self._gates[spec.id] = asyncio.Event()
         loop = self._resident_loop
@@ -255,7 +279,76 @@ class TaskManager:
         # The future is never dropped: a spawn crash is logged and fails the
         # handle (a dropped concurrent future would swallow it silently).
         future.add_done_callback(lambda f: self._log_spawn_failure(spec.id, f))
+        if spec.mode == "background_job" and self._store is not None:
+            # Pinned convention: jobs die with the process — say so once.
+            logger.info("task %s is a background_job — it dies with the process", spec.id)
+        self._persist()  # M4 T5: the registered task is on disk (with its baseline)
         return handle
+
+    def _persist(self, *, exclude: set[str] | None = None) -> None:
+        """Best-effort snapshot of the persistable live tasks (no store → no-op).
+
+        Called after register, after every monitor check, and on every control
+        op. Rows: background_monitor/scheduled only, live states only — a
+        terminal task's row is dropped by the very persist that observes its
+        terminal state. ``exclude`` drops rows EAGERLY for the cancel paths:
+        the CancelledError handler must NOT persist, because manager.stop()
+        also cancels the loops (graceful exit) and that path has to leave the
+        rows alone so the tasks come back after restart. File I/O is best
+        effort — a failed write is logged, never raised into a task loop —
+        and locked, since register() persists on caller threads.
+        """
+        store = self._store
+        if store is None:
+            return
+        rows = [
+            StoredTask(spec=h.spec, baseline=h.baseline, state=h.state)
+            for h in self._handles.values()
+            if h.spec.mode in _PERSISTED_MODES
+            and h.state in _LIVE_STATES
+            and (exclude is None or h.spec.id not in exclude)
+        ]
+        try:
+            with self._persist_lock:
+                store.save(rows)
+        except Exception:
+            logger.warning("could not save the task store", exc_info=True)
+
+    def restore(self) -> int:
+        """Re-register the tasks a previous run persisted (called once at startup).
+
+        Returns the number of tasks restored. The stored baseline seeds the
+        monitor loop's first check, so the first post-restart check COMPARES
+        against the last pre-restart value — a restart never re-reports (M4
+        review focus #2). A stored "paused" state is restored as a real pause;
+        terminal rows (stale or hand-edited store) and ids already registered
+        are skipped; a row whose spec can no longer be registered (e.g. an
+        unparseable monitor target after a code change) is logged and skipped,
+        never fatal. Each register() persists again, so the rows are on disk
+        (with their baselines) before this returns.
+        """
+        store = self._store
+        if store is None:
+            return 0
+        restored = 0
+        for row in store.load():
+            if row.state not in _LIVE_STATES:
+                continue
+            if self._handles.get(row.spec.id) is not None:
+                continue  # already registered (double restore / id collision)
+            try:
+                self.register(row.spec, baseline=row.baseline)
+            except ValueError:
+                logger.warning(
+                    "task %s from the store could not be re-registered", row.spec.id
+                )
+                continue
+            if row.state == "paused":
+                # control() marshals the real pause (loop parks) and persists it.
+                self.control(row.spec.id, "pause")
+            restored += 1
+        logger.info("restored %d background task(s) from the store", restored)
+        return restored
 
     async def _spawn(self, handle: TaskHandle, check: MonitorCheck | None) -> None:
         """Start the long-lived loop coroutine for a registered task (resident loop only)."""
@@ -285,6 +378,7 @@ class TaskManager:
             handle.error = repr(exc)
             self._emit(task_id, "failed", f"task could not start: {exc}")
             handle.state = "failed"
+            self._persist()  # failed → row dropped (terminal states are not persisted)
 
     def list_tasks(self, state: TaskState | None = None) -> list[TaskHandle]:
         """All registered task handles (registration order); optionally one state only."""
@@ -326,6 +420,7 @@ class TaskManager:
                 return False
             self._paused.add(task_id)
             handle.state = "paused"
+            self._persist()
             return True
         if cmd == "resume":
             if handle.state != "paused":
@@ -340,12 +435,14 @@ class TaskManager:
                     monitor.interval_s, now=self._clock(), last=None, rng=self._rng
                 )
             self._wake(task_id)
+            self._persist()
             return True
         if cmd == "run_now":
             if handle.state in ("completed", "failed", "cancelled"):
                 return False
             self._run_now.add(task_id)
             self._wake(task_id)
+            self._persist()
             return True
         if cmd == "cancel":
             loop_task = self._loops.get(task_id)
@@ -354,6 +451,10 @@ class TaskManager:
             kill = self._kills.get(task_id)
             if kill is not None:
                 kill.set()  # instant abort for a planner turn running inside the loop
+            # The row is dropped HERE, eagerly — not in the loop's CancelledError
+            # handler, which also runs on manager.stop() (graceful exit) and must
+            # keep the rows so tasks survive restart.
+            self._persist(exclude={task_id})
             loop_task.cancel()
             return True
         return False
@@ -408,6 +509,7 @@ class TaskManager:
             logger.info("task %s cancelled", spec.id)
             self._emit(spec.id, "cancelled", spec.instruction)
             handle.state = "cancelled"
+            self._persist()  # cancelled → row dropped (a scheduled turn runs here)
             raise
         except Exception as exc:
             logger.exception("task %s crashed", spec.id)
@@ -461,6 +563,10 @@ class TaskManager:
             if kill is not None:
                 kill.set()
             loop_task.cancel()
+        # The kill switch cancelled every long-lived loop: cancelled tasks are
+        # not persisted, so their rows are dropped eagerly here (same reason as
+        # the control("cancel") path — the CancelledError handler never persists).
+        self._persist(exclude=set(self._loops))
 
     def cancel_task(self, task: asyncio.Task[TaskHandle]) -> None:
         """Cancel one running turn (barge-in / cancel intent) with an instant kill."""
@@ -546,11 +652,15 @@ class TaskManager:
         try:
             self._emit(task_id, "started", spec.instruction)
             handle.state = "running"
-            baseline: str | None = None
+            # Seeded from the store by restore() (M4 T5): the first check after a
+            # restart COMPARES against the last pre-restart value. A None here
+            # would silently re-capture and swallow (or spam) the missed change.
+            baseline: str | None = handle.baseline
             errors = 0
             while True:
                 outcome = await asyncio.to_thread(check.check, baseline)
                 handle.last_check = self._clock()
+                terminal = False
                 if not outcome.ok:
                     errors += 1
                     handle.error = outcome.error or outcome.summary
@@ -558,15 +668,23 @@ class TaskManager:
                     if errors >= _MAX_CHECK_ERRORS:
                         self._emit(task_id, "failed", outcome.summary)
                         handle.state = "failed"
-                        return
+                        terminal = True
                 else:
                     errors = 0
                     if baseline is not None and outcome.changed:
                         handle.result = TaskResult(ok=True, summary_to_speak=outcome.summary)
                         self._emit(task_id, "result", outcome.summary)
                         handle.state = "completed"
-                        return
-                    baseline = outcome.value  # first check captures the baseline
+                        terminal = True
+                    else:
+                        baseline = outcome.value  # first check captures the baseline
+                        handle.baseline = baseline
+                # One persist per check (M4 T5): the baseline and state reach the
+                # store — the anti-re-report record survives a crash — and a
+                # terminal task's row is dropped (terminal states are not persisted).
+                self._persist()
+                if terminal:
+                    return
                 handle.next_due = next_due(
                     monitor.interval_s, now=self._clock(), last=handle.last_check,
                     rng=self._rng,
@@ -630,7 +748,14 @@ class TaskManager:
             await asyncio.sleep(0)
 
     def _mark_cancelled(self, handle: TaskHandle) -> None:
-        """Emit + record ``cancelled`` — once (a turn inside the loop may have already)."""
+        """Emit + record ``cancelled`` — once (a turn inside the loop may have already).
+
+        Deliberately does NOT persist: this handler also runs when manager.stop()
+        cancels the loops on a graceful exit, and the store must keep those rows
+        so the tasks come back after restart. User-initiated cancels drop their
+        rows eagerly at the op (control("cancel") / _cancel_loops / the kill
+        switch's turn cancellation in _run_planner_turn).
+        """
         if handle.state != "cancelled":
             self._emit(handle.spec.id, "cancelled", handle.spec.instruction)
             handle.state = "cancelled"
