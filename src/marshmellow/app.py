@@ -47,7 +47,7 @@ from marshmellow.audio.capture import AudioEngine
 from marshmellow.audio.loop import Transcriber, VoiceLoop
 from marshmellow.core import secrets
 from marshmellow.core.bus import EventBus
-from marshmellow.core.config import Settings
+from marshmellow.core.config import LLMProviderConfig, Settings
 from marshmellow.core.contracts import (
     ActionRequest,
     ActionResult,
@@ -65,6 +65,7 @@ from marshmellow.core.contracts import (
 )
 from marshmellow.core.logging import setup_logging
 from marshmellow.llm.base import LLMProvider
+from marshmellow.llm.resilience import ProviderChain
 from marshmellow.packs.base import DEShell, ShellResult
 from marshmellow.packs.windows import WindowsPack, window_title
 from marshmellow.perception.registry import ElementRegistry
@@ -439,8 +440,37 @@ class App:
             return None
         return GuiMarshaledConfirm()
 
+    def _build_provider(self, cfg: LLMProviderConfig) -> LLMProvider | None:
+        """One provider instance from its config — every call builds a FRESH HTTP
+        client (the dedicated-instance rule: pools are loop-bound, M5 T1).
+
+        Returns None for the kinds that mean "no LLM": `fake` and an ollama
+        config without a model.
+        """
+        if cfg.kind == "ollama":
+            from marshmellow.llm.ollama import DEFAULT_OLLAMA_URL, OllamaProvider
+
+            return OllamaProvider(base_url=cfg.base_url or DEFAULT_OLLAMA_URL, model=cfg.model)
+        if cfg.kind == "openai_compat":
+            from marshmellow.llm.openai_compat import OpenAICompatProvider
+
+            return OpenAICompatProvider(
+                base_url=cfg.base_url,
+                model=cfg.model,
+                get_key=secrets.load_api_key,
+                vision=cfg.vision,
+            )
+        return None  # kind == "fake"
+
     def _build_providers(self) -> _Providers:
         """D4/D5 (§3.4): build the planner LLM + the vision provider once.
+
+        When `[providers].fallback` is configured (M5 T2), the planner provider
+        is a `ProviderChain(primary, fallback)` — per provider, silent
+        transient-failure retries, then the next (§3.4 fallback order, the
+        local adapter behind the cloud); exhaustion everywhere raises
+        ProviderUnavailableError, which the planner speaks as the distinct
+        unavailable summary.
 
         `vision` is a DEDICATED provider instance (same model config, own HTTP
         client) whenever the planner provider's caps claim vision — a
@@ -452,54 +482,34 @@ class App:
         (orchestrator `_ensure_loop`) while VisionPerceiver drives its own
         from the vision-provider-loop, and HTTP pools are loop-bound — a
         shared instance deadloops/fails its second user's first pooled call
-        (M5 T1 review fix). Providers are built BEFORE perception so the SoM
-        fallback is wired from `_Providers.vision` (see `__init__` ordering).
+        (M5 T1 review fix). Vision selection is unchanged by the chain (M5
+        T2): the dedicated instance comes from the primary model config, while
+        the CHAIN's caps OR the fallback's vision in for anyone that reads
+        them. Providers are built BEFORE perception so the SoM fallback is
+        wired from `_Providers.vision` (see `__init__` ordering).
         """
         cfg = self.settings.providers.llm
-        if cfg.kind == "ollama":
-            if not cfg.model:
-                logger.warning(
-                    "LLM provider kind 'ollama' needs a model "
-                    "(set [providers.llm].model); using the keyword planner"
-                )
-                return _Providers(planner=None, vision=None)
-            from marshmellow.llm.ollama import DEFAULT_OLLAMA_URL, OllamaProvider
-
-            url = cfg.base_url or DEFAULT_OLLAMA_URL
-            provider: LLMProvider = OllamaProvider(base_url=url, model=cfg.model)
-            logger.info("LLM provider: ollama (model=%s)", cfg.model)
-            return _Providers(
-                planner=provider,
-                vision=(
-                    OllamaProvider(base_url=url, model=cfg.model)  # own client — vision loop
-                    if provider.capabilities.vision
-                    else None
-                ),
+        if cfg.kind == "ollama" and not cfg.model:
+            logger.warning(
+                "LLM provider kind 'ollama' needs a model "
+                "(set [providers.llm].model); using the keyword planner"
             )
-        if cfg.kind == "openai_compat":
-            from marshmellow.llm.openai_compat import OpenAICompatProvider
-
-            provider = OpenAICompatProvider(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                get_key=secrets.load_api_key,
-                vision=cfg.vision,
-            )
-            logger.info("LLM provider: openai_compat (model=%s)", cfg.model)
-            return _Providers(
-                planner=provider,
-                vision=(
-                    OpenAICompatProvider(
-                        base_url=cfg.base_url,
-                        model=cfg.model,
-                        get_key=secrets.load_api_key,
-                        vision=cfg.vision,
-                    )
-                    if provider.capabilities.vision
-                    else None
-                ),
-            )
-        return _Providers(planner=None, vision=None)  # kind == "fake"
+            return _Providers(planner=None, vision=None)
+        provider = self._build_provider(cfg)
+        if provider is None:
+            return _Providers(planner=None, vision=None)  # kind == "fake"
+        logger.info("LLM provider: %s (model=%s)", cfg.kind, cfg.model)
+        planner: LLMProvider = provider
+        fb = self.settings.providers.fallback
+        if fb is not None:
+            fallback = self._build_provider(fb)
+            if fallback is not None:
+                planner = ProviderChain(primary=provider, fallback=fallback)
+                logger.info("LLM fallback chain: %s → %s", cfg.kind, fb.kind)
+        return _Providers(
+            planner=planner,
+            vision=self._build_provider(cfg) if provider.capabilities.vision else None,
+        )
 
     def _build_planner(self, settings: Settings) -> Planner:
         """D7: the provider setting picks the planner behind TaskManager.

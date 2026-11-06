@@ -33,6 +33,8 @@ class LLMProviderConfig(BaseModel):
 
 class ProvidersConfig(BaseModel):
     llm: LLMProviderConfig = Field(default_factory=LLMProviderConfig)
+    # §3.4 fallback order — the local adapter behind the cloud
+    fallback: LLMProviderConfig | None = None
 
 
 class SafetyConfig(BaseModel):
@@ -61,8 +63,10 @@ class Settings(BaseModel):
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        # exclude_none: tomli_w refuses null values — a None field (providers.
+        # fallback, the default) is simply omitted and loads back as None.
         path.write_text(
-            tomli_w.dumps(self.model_dump(mode="json")), encoding="utf-8"
+            tomli_w.dumps(self.model_dump(mode="json", exclude_none=True)), encoding="utf-8"
         )
 
 

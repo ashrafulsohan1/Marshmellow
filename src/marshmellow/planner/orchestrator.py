@@ -75,7 +75,7 @@ from marshmellow.core.contracts import (
     RiskLevel,
     TaskResult,
 )
-from marshmellow.llm.base import LLMProvider
+from marshmellow.llm.base import LLMProvider, ProviderUnavailableError
 from marshmellow.planner.tools import ArtifactPurger, PlannerTools, TurnScopedTools
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,12 @@ STEP_BUDGET_SUMMARY: Final = (
     "Sorry — that task needed too many steps, so I stopped before doing anything rash."
 )
 FAILURE_SUMMARY: Final = "Sorry — something went wrong on my side, so I stopped."
+# M5 T2: every configured provider failed after retries (§3.4) — a distinct,
+# actionable line instead of the generic failure summary. Retries themselves
+# are silent (a word per hiccup is noise; the failure summary is the UX).
+PROVIDER_UNAVAILABLE_SUMMARY: Final = (
+    "I can't reach the AI service right now. Check the internet connection, or try again later."
+)
 
 ESCALATION_MESSAGE: Final = (
     "verification failed 3× on this element — ask the user or finish(ok=false)"
@@ -428,6 +434,15 @@ class LLMPlanner:
                 ok=False,
                 summary_to_speak=TIMEOUT_SUMMARY,
                 details=f"wall-clock timeout ({self._timeout_s:.0f}s)",
+            )
+        except ProviderUnavailableError as exc:
+            # before the generic handler: every provider failed after retries —
+            # the actionable unavailable line, not "something went wrong on my side".
+            logger.warning("all configured LLM providers failed: %s", exc)
+            return TaskResult(
+                ok=False,
+                summary_to_speak=PROVIDER_UNAVAILABLE_SUMMARY,
+                details=repr(exc),
             )
         except Exception as exc:
             logger.exception("planner loop crashed")

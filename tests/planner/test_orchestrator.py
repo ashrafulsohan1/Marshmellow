@@ -27,10 +27,12 @@ from marshmellow.core.contracts import (
     Transcript,
     WindowInfo,
 )
+from marshmellow.llm.base import ProviderUnavailableError
 from marshmellow.planner.orchestrator import (
     M2_TOOLS,
     M3_TOOLS,
     PROMPT_VERSION,
+    PROVIDER_UNAVAILABLE_SUMMARY,
     LLMPlanner,
     load_system_prompt,
 )
@@ -243,6 +245,19 @@ def test_provider_exception_marks_task_failed() -> None:
     assert result.summary_to_speak  # spoken failure
     assert executed == []
     assert "connection reset" in (result.details or "")
+
+
+def test_provider_unavailable_speaks_distinct_summary() -> None:
+    """M5 T2: every provider exhausted → the unavailable summary, not the generic one."""
+    llm = ScriptedLLM([], fail_on_call=1, error=ProviderUnavailableError("all providers failed"))
+    execute, executed = _executor()
+
+    result = LLMPlanner(provider=llm).run(_instruction("open notepad"), execute)
+
+    assert not result.ok
+    assert result.summary_to_speak == PROVIDER_UNAVAILABLE_SUMMARY
+    assert executed == []
+    assert "all providers failed" in (result.details or "")
 
 
 def test_classification_immediate_reply_vs_foreground(caplog: pytest.LogCaptureFixture) -> None:

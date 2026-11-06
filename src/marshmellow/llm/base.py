@@ -12,3 +12,11 @@ class LLMProvider(Protocol):
     def capabilities(self) -> ProviderCaps: ...
 
     async def complete(self, req: LLMRequest) -> LLMResponse: ...
+
+
+class ProviderUnavailableError(RuntimeError):
+    """Every configured provider failed after retries.
+
+    The planner catches this and speaks the distinct unavailable summary,
+    not the generic failure line (§3.4).
+    """
