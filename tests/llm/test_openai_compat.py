@@ -145,6 +145,29 @@ async def test_images_map_to_image_url_content_parts() -> None:
     assert content[1]["image_url"]["url"] == data_url
 
 
+async def test_vision_flag_sets_caps() -> None:
+    """M5 T1: `vision=True` advertises the D5 fallback through the caps seam."""
+    provider = OpenAICompatProvider(
+        base_url="https://api.example.com/v1",
+        model="vision-model",
+        get_key=lambda: "test-key-123",
+        transport=httpx.MockTransport(_tool_call_response),
+        vision=True,
+    )
+    assert provider.capabilities.vision is True
+    assert provider.capabilities.tool_call is True
+
+
+async def test_vision_flag_defaults_off() -> None:
+    provider = OpenAICompatProvider(
+        base_url="https://api.example.com/v1",
+        model="m",
+        get_key=lambda: "k",
+        transport=httpx.MockTransport(_tool_call_response),
+    )
+    assert provider.capabilities.vision is False
+
+
 async def test_message_without_images_stays_a_plain_string() -> None:
     seen: list[httpx.Request] = []
 

@@ -12,9 +12,21 @@ def test_defaults_when_file_missing(tmp_path: Path) -> None:
     assert s.activation == "both"
     assert s.autostart is False
     assert s.providers.llm.kind == "fake"
+    assert s.providers.llm.vision is False  # M5 T1: D5 vision fallback off by default
     assert s.safety == SafetyConfig()  # standard preset, no overrides
     assert s.stt_model == "base"  # M0-SP2 decision
     assert s.tts_voice == "en_US-lessac-medium"  # M0-SP7 decision
+
+
+def test_config_parses_vision_flag(tmp_path: Path) -> None:
+    """M5 T1: [providers.llm].vision serves the D5 SoM fallback from a cloud model."""
+    p = tmp_path / "config.toml"
+    p.write_text(
+        '[providers.llm]\nkind = "openai_compat"\nvision = true\n', encoding="utf-8"
+    )
+    s = load_settings(p)
+    assert s.providers.llm.kind == "openai_compat"
+    assert s.providers.llm.vision is True
 
 
 def test_safety_overrides_roundtrip(tmp_path: Path) -> None:

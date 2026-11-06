@@ -1,0 +1,63 @@
+{
+  "generated": "2026-11-06T19:57:17+00:00",
+  "git": "c053b0f",
+  "url": "http://127.0.0.1:11434",
+  "runs": 5,
+  "models": {
+    "hf.co/mradermacher/Qwen2.5-Coder-1.5B-Instruct-heretic-GGUF:Q6_K": {
+      "capabilities": [
+        "completion",
+        "tools",
+        "insert"
+      ],
+      "planner": {
+        "latency_ms": [
+          16714.5,
+          16607.5,
+          16658.3,
+          16675.1,
+          16613.3
+        ],
+        "median_ms": 16658.3,
+        "tool_call_rate": 0.0,
+        "arg_valid_rate": 0.0,
+        "calls": [
+          {
+            "name": null,
+            "argument_keys": [],
+            "valid": false
+          },
+          {
+            "name": null,
+            "argument_keys": [],
+            "valid": false
+          },
+          {
+            "name": null,
+            "argument_keys": [],
+            "valid": false
+          },
+          {
+            "name": null,
+            "argument_keys": [],
+            "valid": false
+          },
+          {
+            "name": null,
+            "argument_keys": [],
+            "valid": false
+          }
+        ],
+        "errors": []
+      },
+      "vision": {
+        "ok": false,
+        "latency_ms": [],
+        "median_ms": null,
+        "elements": [],
+        "error": "PerceptionError('vision provider timed out after 30s')"
+      }
+    }
+  },
+  "recommended_default": null
+}

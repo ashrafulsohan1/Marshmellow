@@ -28,6 +28,7 @@ class LLMProviderConfig(BaseModel):
     base_url: str = ""
     model: str = ""
     api_key_ref: str = ""  # Windows Credential Manager ref, never the key itself
+    vision: bool = False  # cloud model serves the D5 SoM vision fallback (§3.6)
 
 
 class ProvidersConfig(BaseModel):

@@ -34,6 +34,8 @@ class OpenAICompatProvider:
         model: str,
         get_key: Callable[[], str | None],
         transport: httpx.AsyncBaseTransport | None = None,
+        *,
+        vision: bool = False,
     ) -> None:
         self._model = model
         key = get_key()
@@ -41,7 +43,9 @@ class OpenAICompatProvider:
         if transport is not None:
             kwargs["http_client"] = httpx.AsyncClient(transport=transport)
         self._client = AsyncOpenAI(**kwargs)
-        self._caps = ProviderCaps(vision=False, tool_call=True, json_schema=False)
+        # `vision` is the D5 opt-in ([providers.llm].vision): the configured
+        # cloud model must actually accept images for the fallback to work.
+        self._caps = ProviderCaps(vision=vision, tool_call=True, json_schema=False)
 
     @property
     def capabilities(self) -> ProviderCaps:

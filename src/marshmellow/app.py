@@ -17,6 +17,9 @@ ScreenToolbox) wraps perception + registry + that same executor seam.
 M4: the TaskManager carries the D6 foreground lease (`self.lease`, same
 fail-closed ConfirmFlow as the gate), so background modes must win spoken
 consent before any non-read action reaches the executor.
+M5: `_build_providers` builds the D7 LLM provider and the D5 vision provider
+(the planner provider itself when its caps claim vision) BEFORE perception —
+`_build_perception` wires the SoM `VisionPerceiver` from it, or runs UIA-only.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, cast
 
 from pydantic import ValidationError
 
@@ -60,6 +63,7 @@ from marshmellow.core.contracts import (
     WindowInfo,
 )
 from marshmellow.core.logging import setup_logging
+from marshmellow.llm.base import LLMProvider
 from marshmellow.packs.base import DEShell, ShellResult
 from marshmellow.packs.windows import WindowsPack, window_title
 from marshmellow.perception.registry import ElementRegistry
@@ -123,6 +127,19 @@ class AskChannelLike(Protocol):
     """The spoken ask seam (AskUserChannel satisfies it)."""
 
     def ask(self, question: str, cancelled: Callable[[], bool] | None = None) -> str: ...
+
+
+class _Providers(NamedTuple):
+    """The LLM providers built once in `__init__` (§3.4, D4/D5).
+
+    `planner` is the LLM behind the planner — None for `kind="fake"` (and for
+    an ollama config without a model), which falls back to FakePlanner.
+    `vision` is the D5 SoM fallback provider: the planner provider itself iff
+    its caps claim vision — never the fake planner.
+    """
+
+    planner: LLMProvider | None
+    vision: LLMProvider | None
 
 
 def _default_log_dir() -> Path:
@@ -197,6 +214,9 @@ class App:
             # hops the request to the GUI thread before any widget is touched.
             self._open_ui_marshal = GuiMarshal(self._open_dashboard)
             self.bus.subscribe(TrayAction, self._on_tray_action)
+        # The providers come first: perception needs the D5 vision provider,
+        # and the planner wraps the same LLM below (§3.4, M5 T1).
+        self._providers = self._build_providers()
         self.perception = perception if perception is not None else self._build_perception()
         self.action_layer = (
             action_layer if action_layer is not None else self._build_action_layer()
@@ -335,17 +355,24 @@ class App:
     def _build_perception(self) -> ScreenPerceptionLike:
         """Real UIA stack: settle-poll reader + the shared registry (§3.6).
 
-        Vision stays unwired until a vision-capable provider is configured
-        (D5): `snapshot` then degrades to a UIA-only walk, never an error.
+        The D5 SoM vision fallback is wired from `_Providers.vision` (the
+        vision-capable planner provider, M5 T1); without one, `snapshot`
+        degrades to a UIA-only walk, never an error.
         """
         from marshmellow.perception.snapshot import ScreenPerception
         from marshmellow.perception.uia_reader import UIAReader
+        from marshmellow.perception.vision import VisionPerceiver
 
+        vision = (
+            VisionPerceiver(provider=self._providers.vision)
+            if self._providers.vision is not None
+            else None
+        )
         return ScreenPerception(
             reader=UIAReader(),
             registry=self.registry,
             foreground=self._foreground_window,
-            vision=None,
+            vision=vision,
         )
 
     def _build_action_layer(self) -> ActionLayerLike:
@@ -408,29 +435,64 @@ class App:
             return None
         return GuiMarshaledConfirm()
 
+    def _build_providers(self) -> _Providers:
+        """D4/D5 (§3.4): build the planner LLM + the vision provider once.
+
+        `vision` = the planner provider itself iff its caps claim vision — a
+        vision-capable cloud model (`[providers.llm].vision`, D5) or the local
+        ollama model (vision-capable by contract, D4). The fake planner never
+        serves vision: `kind="fake"` (and ollama without a model) stays
+        UIA-only. Providers are built BEFORE perception so the SoM fallback
+        can share the same LLM (see `__init__` ordering).
+        """
+        cfg = self.settings.providers.llm
+        if cfg.kind == "ollama":
+            if not cfg.model:
+                logger.warning(
+                    "LLM provider kind 'ollama' needs a model "
+                    "(set [providers.llm].model); using the keyword planner"
+                )
+                return _Providers(planner=None, vision=None)
+            from marshmellow.llm.ollama import DEFAULT_OLLAMA_URL, OllamaProvider
+
+            provider: LLMProvider = OllamaProvider(
+                base_url=cfg.base_url or DEFAULT_OLLAMA_URL, model=cfg.model
+            )
+            logger.info("LLM provider: ollama (model=%s)", cfg.model)
+            return _Providers(
+                planner=provider,
+                vision=provider if provider.capabilities.vision else None,
+            )
+        if cfg.kind == "openai_compat":
+            from marshmellow.llm.openai_compat import OpenAICompatProvider
+
+            provider = OpenAICompatProvider(
+                base_url=cfg.base_url,
+                model=cfg.model,
+                get_key=secrets.load_api_key,
+                vision=cfg.vision,
+            )
+            logger.info("LLM provider: openai_compat (model=%s)", cfg.model)
+            return _Providers(
+                planner=provider,
+                vision=provider if provider.capabilities.vision else None,
+            )
+        return _Providers(planner=None, vision=None)  # kind == "fake"
+
     def _build_planner(self, settings: Settings) -> Planner:
         """D7: the provider setting picks the planner behind TaskManager.
 
-        The LLM planner gets the screen toolbox (perceive/act/verify, M3);
-        the keyword planner stays the fake-provider default unless a planner
-        was injected.
+        The provider decision itself was made in `_build_providers` (the D5
+        vision fallback shares that LLM, so it must exist before perception):
+        here it is merely wrapped with the screen toolbox (perceive/act/
+        verify, M3); a None provider falls back to the keyword planner.
         """
-        cfg = settings.providers.llm
-        if cfg.kind == "openai_compat":
-            from marshmellow.llm.openai_compat import OpenAICompatProvider
-            from marshmellow.planner.orchestrator import LLMPlanner
+        provider = self._providers.planner
+        if provider is None:
+            return FakePlanner()
+        from marshmellow.planner.orchestrator import LLMPlanner
 
-            provider = OpenAICompatProvider(
-                base_url=cfg.base_url, model=cfg.model, get_key=secrets.load_api_key
-            )
-            logger.info("LLM provider: openai_compat (model=%s)", cfg.model)
-            return LLMPlanner(provider, toolbox=self.toolbox)
-        if cfg.kind != "fake":
-            logger.warning(
-                "LLM provider kind %r is not implemented yet; using the keyword planner",
-                cfg.kind,
-            )
-        return FakePlanner()
+        return LLMPlanner(provider, toolbox=self.toolbox)
 
     # -- executor seams ---------------------------------------------------------
 

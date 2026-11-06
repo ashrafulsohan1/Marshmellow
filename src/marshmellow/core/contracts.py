@@ -193,6 +193,11 @@ class ActivationDegraded(BaseModel):
     message: str
 
 
+class LLMToolCall(BaseModel):
+    name: str
+    arguments: dict[str, object] = Field(default_factory=dict)
+
+
 class LLMMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
@@ -200,11 +205,10 @@ class LLMMessage(BaseModel):
     name: str | None = None
     # Base64 PNG data-URLs ("data:image/png;base64,...") — vision fallback path (D5).
     images: list[str] = Field(default_factory=list)
-
-
-class LLMToolCall(BaseModel):
-    name: str
-    arguments: dict[str, object] = Field(default_factory=dict)
+    # Assistant tool-call echo on the message stream (default empty; nothing
+    # existing produces it): the Ollama native dialect round-trips it as
+    # message.tool_calls with OBJECT arguments — openai_compat ignores it.
+    tool_calls: list[LLMToolCall] = Field(default_factory=list)
 
 
 class LLMRequest(BaseModel):
