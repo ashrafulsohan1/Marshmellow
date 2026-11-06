@@ -133,3 +133,11 @@ def disable_autostart(runner: Runner = _run) -> bool:
         ["reg", "delete", RUN_KEY, "/v", AUTOSTART_TASK, "/f"],
         "disable autostart",
     )
+
+
+def set_autostart(enabled: bool) -> bool:
+    """The bool toggle the settings surfaces pin as their ``apply_autostart``
+    seam (``Callable[[bool], bool]``, M5 Task 4): enable on True, disable on
+    False. (``enable_autostart`` itself takes a launch string, so it cannot
+    serve that signature directly.)"""
+    return enable_autostart() if enabled else disable_autostart()

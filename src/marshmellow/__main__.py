@@ -18,11 +18,18 @@ from PySide6.QtWidgets import QApplication
 
 from marshmellow.app import App
 from marshmellow.core.config import default_config_path, load_settings
+from marshmellow.ui.onboarding import OnboardingWizard, should_onboard
 
 
 def main() -> int:
     qapp = QApplication.instance() or QApplication(sys.argv)
     settings = load_settings(default_config_path())
+    # First run (no config found anywhere): the one-page onboarding dialog
+    # collects the activation mode, API key and autostart BEFORE the engine
+    # starts — the wizard mutates `settings` and persists them. Headless
+    # entries (simulator, tests) never import this module, so they never see it.
+    if should_onboard(default_config_path()):
+        OnboardingWizard(settings).run()
     app = App(settings, headless=False)
     app.start()
 

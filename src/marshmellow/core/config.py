@@ -92,6 +92,14 @@ def default_config_path() -> Path | None:
     return None
 
 
+def product_config_path() -> Path:
+    """The write-side twin of `default_config_path()`'s product location (§3.14):
+    where the settings surfaces persist — ``%LOCALAPPDATA%/Marshmellow/config.toml``
+    (cwd fallback like `default_task_store_path`)."""
+    base = os.environ.get("LOCALAPPDATA")
+    return (Path(base) if base else Path.cwd()) / "Marshmellow" / "config.toml"
+
+
 def load_settings(path: Path | None = None) -> Settings:
     """Load settings from TOML, or defaults when absent/malformed."""
     if path is None or not path.exists():

@@ -111,6 +111,41 @@ wake model isn't trained yet. Start the app with `uv run python -m marshmellow`.
 copied into the M4 evidence block in [02-milestones.md](02-milestones.md);
 then delete this entry.
 
+## M5 Task 4 — first-run onboarding + settings dialog (user-physical)
+
+**Deferred from:** M5 plan Task 4 — the wizard and the modal dialog need a human
+watching/listening; everything automatable is already gated (20 offscreen tests in
+`tests/core/test_assets.py`, `tests/ui/test_onboarding.py`, `tests/ui/test_settings.py`:
+should_onboard gating, injected mic-probe rendering, wake options disabled without a
+model, key stored once and never echoed into TOML, autostart toggle through the
+injected seam, cancel = no-op, invalid hotkey refuses Save, dashboard Settings…
+button). Real seams the fakes stand in for: the sounddevice mic probe, Windows
+Credential Manager, the HKCU Run key.
+
+**Run** (outcomes recorded verbatim below each step):
+
+1. **First-run wizard:** move `%LOCALAPPDATA%/Marshmellow/config.toml` aside →
+   `uv run python -m marshmellow` → the "Welcome to Marshmellow" dialog appears
+   BEFORE tray/mascot: the mic row shows a real probe result ("Microphone: OK — …"
+   or a permission hint), the wake row says "not set up — the hotkey will be used;
+   train later with tools/train_wake_model.py", and the wake-word/Both radios are
+   disabled while the Hotkey radio is preselected. Outcome: ____________
+2. **Wizard finish (D2/D3/D7):** pick Hotkey, paste the real API key, press
+   "Save key" (field clears, "API key stored."), check autostart, Finish →
+   `config.toml` appears containing `activation = "hotkey"` and `autostart = true`
+   but NO trace of the key (`findstr /s sk- config.toml` finds nothing); the key
+   answers `keyring`'s Credential Manager entry; the Run key exists. Relaunch →
+   NO wizard (config exists now). Outcome: ____________
+3. **Settings dialog live:** tray → Open Marshmellow → "Settings…" → set the hotkey
+   to `notakey` → the error shows live and Save refuses; set a valid combo + strict
+   preset → Save closes and updates config.toml. With the dialog still open, run a
+   task needing confirmation → the spoken/tray confirm fallback still fires (nested
+   event loop). Restart → the new hotkey works. Outcome: ____________
+
+**Done when:** all three outcomes are recorded verbatim in this block and copied
+into the M5 evidence block in [02-milestones.md](02-milestones.md); then delete
+this entry.
+
 ## Carry-over (lower priority, not blocking M2 DoD)
 
 - **Live-mic wake false-accept soak** (SP3 "Limitations", planned for M2): ≥ 1 h of

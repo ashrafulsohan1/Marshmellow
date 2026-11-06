@@ -328,8 +328,25 @@ class App:
         if self._dashboard is None:
             from marshmellow.ui.main_window import TasksDashboard
 
-            self._dashboard = TasksDashboard(bus=self.bus, tasks=self)
+            self._dashboard = TasksDashboard(
+                bus=self.bus, tasks=self, open_settings=self._open_settings
+            )
         self._dashboard.show_dashboard()
+
+    def _open_settings(self) -> None:
+        """GUI thread only (the dashboard's "Settings…" button): the modal
+        settings dialog.
+
+        Lazy-built per summons; Save persists to ``product_config_path()`` and
+        the changes apply on the NEXT start (M5 Task 4 pinned — no live watcher
+        rebuild). The modal ``exec()`` runs a nested event loop, so the
+        engine's tray-confirm marshal (BlockingQueuedConnection) stays live
+        while the dialog is open."""
+        from marshmellow.core import autostart
+        from marshmellow.ui.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self.settings, apply_autostart=autostart.set_autostart)
+        dialog.exec()
 
     def _build_stt(self) -> Transcriber:
         """Real faster-whisper for live runs; the fake keeps headless runs silent-fast."""

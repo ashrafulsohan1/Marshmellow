@@ -128,10 +128,17 @@ class TasksDashboard(QMainWindow):
 
     _event_received = Signal(object)  # carries a TaskEvent; queued across threads
 
-    def __init__(self, bus: EventBus, tasks: TaskDirectory) -> None:
+    def __init__(
+        self,
+        bus: EventBus,
+        tasks: TaskDirectory,
+        *,
+        open_settings: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__()
         self._bus = bus
         self._tasks = tasks
+        self._open_settings = open_settings
         self.setObjectName("tasks-dashboard")
         self.setWindowTitle("Marshmellow — Tasks")
 
@@ -152,6 +159,16 @@ class TasksDashboard(QMainWindow):
 
         central = QWidget(self)
         layout = QVBoxLayout(central)
+        if open_settings is not None:
+            # M5 Task 4: the GUI-thread settings callable (App._open_settings) —
+            # None (headless/test dashboards) simply gets no button.
+            top_bar = QHBoxLayout()
+            top_bar.addStretch(1)
+            settings_button = QPushButton("Settings…", central)
+            settings_button.setObjectName("settings-button")
+            settings_button.clicked.connect(self._open_settings)
+            top_bar.addWidget(settings_button)
+            layout.addLayout(top_bar)
         layout.addWidget(self.table, 3)
         layout.addWidget(QLabel("Trace", central))
         layout.addWidget(self.trace, 2)
