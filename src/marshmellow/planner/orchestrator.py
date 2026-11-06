@@ -27,6 +27,13 @@ are perception reads that call the toolbox directly (NOT executor actions);
 ``act`` maps onto an ``ActionRequest`` whose declared ``risk`` is carried but
 re-classified by the safety gate at the executor seam (§3.13).
 
+M4 adds ``create_task`` to the M3 set: the model registers long-lived
+background tasks (monitors / jobs / scheduled) through the executor seam. The
+mapping here checks SHAPE only and carries the payload intact;
+``App._create_task`` re-validates it (pydantic, the 30 s monitor floor,
+presence per mode) and registers with the TaskManager — a refusal is an
+``ActionResult(ok=False)`` observation the model sees, never a crash.
+
 Verify loop (§3.5): a ``finish`` bundled into the same model turn as pending
 actions is deferred (M2 verify-lite) — the model must see the fresh
 ``ACTION → RESULT`` observations and then call ``finish`` alone. On top of
@@ -100,6 +107,9 @@ _READ_TOOLS: Final[frozenset[str]] = frozenset({"get_elements", "screenshot"})
 
 _ACTION_KINDS: Final[frozenset[str]] = frozenset(get_args(ActionKind))
 _RISK_LEVELS: Final[frozenset[str]] = frozenset(get_args(RiskLevel))
+
+# §3.12 background classes — the only modes create_task may register.
+_TASK_MODES: Final[tuple[str, ...]] = ("background_monitor", "background_job", "scheduled")
 
 
 def _tool(name: str, description: str, parameters: dict[str, object]) -> dict[str, object]:
@@ -226,6 +236,60 @@ _ACT_TOOL: Final[dict[str, object]] = _tool(
     },
 )
 
+_CREATE_TASK_TOOL: Final[dict[str, object]] = _tool(
+    "create_task",
+    "Register a long-lived background task — the user is NOT waiting for its "
+    "result; the task reports by voice on its own later. Use it when the user "
+    "asks to watch something (a channel, a page, a file) or to do something "
+    "later, never for what they are waiting for now. Modes: background_monitor "
+    "(poll 'monitor' until it changes), background_job (one unattended task), "
+    "scheduled (run 'instruction' at the ISO-8601 'schedule').",
+    {
+        "type": "object",
+        "properties": {
+            "instruction": {
+                "type": "string",
+                "description": "What the background task should do or watch",
+            },
+            "mode": {"type": "string", "enum": list(_TASK_MODES)},
+            "monitor": {
+                "type": "object",
+                "description": "REQUIRED for background_monitor: what to poll",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["url_diff", "api_field", "file_hash", "rss"],
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": (
+                            "url_diff/rss: a URL; api_field: '<url>#<dotted.path>'; "
+                            "file_hash: a local file path"
+                        ),
+                    },
+                    "interval_s": {
+                        "type": "integer",
+                        "minimum": 30,
+                        "description": "Seconds between checks — at least 30",
+                    },
+                    "condition": {
+                        "type": "string",
+                        "description": "What change the user cares about, one phrase",
+                    },
+                },
+                "required": ["kind", "target", "interval_s", "condition"],
+                "additionalProperties": False,
+            },
+            "schedule": {
+                "type": "string",
+                "description": "REQUIRED for scheduled: ISO-8601 local date-time",
+            },
+        },
+        "required": ["instruction", "mode"],
+        "additionalProperties": False,
+    },
+)
+
 M3_TOOLS: Final[tuple[dict[str, object], ...]] = (
     _OPEN_APP_TOOL,
     _GET_ELEMENTS_TOOL,
@@ -233,6 +297,7 @@ M3_TOOLS: Final[tuple[dict[str, object], ...]] = (
     _ACT_TOOL,
     _WAIT_TOOL,
     _ASK_USER_TOOL,
+    _CREATE_TASK_TOOL,
     _FINISH_TOOL,
 )
 
@@ -459,6 +524,16 @@ class LLMPlanner:
             return self._run_toolbox_tool(call, execute)
         request = self._as_request(call)
         if request is None:
+            if call.name == "create_task":
+                return ActionResult(
+                    ok=False,
+                    observation=(
+                        "invalid create_task arguments — instruction (string) and mode "
+                        f"(one of {', '.join(_TASK_MODES)}) are required; monitor, when "
+                        "given, must be an object and schedule a string"
+                    ),
+                    error="invalid_create_task",
+                )
             return ActionResult(
                 ok=False,
                 observation=(
@@ -604,6 +679,32 @@ class LLMPlanner:
                 payload={"question": question.strip()},
                 rationale=f"orchestrator: ask_user({question.strip()!r})",
                 risk="L0",
+            )
+        if call.name == "create_task":
+            instruction = args.get("instruction")
+            if not isinstance(instruction, str) or not instruction.strip():
+                return None
+            mode = args.get("mode")
+            if not isinstance(mode, str) or mode not in _TASK_MODES:
+                return None
+            monitor = args.get("monitor")
+            if monitor is not None and not isinstance(monitor, dict):
+                return None
+            schedule = args.get("schedule")
+            if schedule is not None and not isinstance(schedule, str):
+                return None
+            # The payload travels INTACT: App._create_task owns the semantic
+            # validation (pydantic MonitorSpec, the 30 s floor, presence per mode).
+            payload: dict[str, object] = {"instruction": instruction.strip(), "mode": mode}
+            if isinstance(monitor, dict):
+                payload["monitor"] = dict(monitor)
+            if isinstance(schedule, str):
+                payload["schedule"] = schedule
+            return ActionRequest(
+                kind="create_task",
+                payload=payload,
+                rationale=f"orchestrator: create_task({mode})",
+                risk="L1",
             )
         return None  # everything else is not an M2 executor action (UI tools ride the toolbox)
 

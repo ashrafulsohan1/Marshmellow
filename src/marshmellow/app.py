@@ -25,8 +25,11 @@ import logging
 import os
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
+
+from pydantic import ValidationError
 
 from marshmellow import __version__
 from marshmellow.audio.activation import (
@@ -46,10 +49,12 @@ from marshmellow.core.contracts import (
     ActionResult,
     ActivationDegraded,
     Element,
+    MonitorSpec,
     PerceptionHint,
     PerceptionSnapshot,
     SpeakRequest,
     TaskEvent,
+    TaskMode,
     TaskSpec,
     WindowInfo,
 )
@@ -60,7 +65,7 @@ from marshmellow.perception.registry import ElementRegistry
 from marshmellow.planner.fake import FakePlanner
 from marshmellow.planner.tools import ScreenToolbox
 from marshmellow.stt.fake import FakeSTT
-from marshmellow.tasks.manager import Planner, TaskHandle, TaskManager
+from marshmellow.tasks.manager import BACKGROUND_MODES, Planner, TaskHandle, TaskManager
 from marshmellow.tts.fake import FakeTTS
 from marshmellow.ui.tray import GuiMarshaledConfirm, TrayAction
 
@@ -74,6 +79,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 Executor = Callable[[ActionRequest], ActionResult]
+
+#: M4 pinned convention: LLM-created monitors poll at most every 30 s — no hot
+#: loops from the model (``MonitorSpec`` itself stays gt=0).
+MONITOR_MIN_INTERVAL_S: Final = 30
+
+
+def _invalid_create_task(reason: str) -> ActionResult:
+    """The create_task refusal: an observation the model sees and can fix."""
+    return ActionResult(
+        ok=False,
+        observation=f"invalid create_task payload: {reason}",
+        error="invalid_create_task",
+    )
 
 
 class ScreenPerceptionLike(Protocol):
@@ -414,7 +432,10 @@ class App:
         """The executor seam (§3.12): route one action to its handler.
 
         `ask_user` → the spoken ask channel; `shell`+open_app → the DE pack;
-        everything else → the safety gate in front of the action layer (§3.13).
+        `create_task` → the TaskManager (a task-layer operation, leaseless per
+        READ_KINDS — it never touches the screen, so the gate is not in its
+        path); everything else → the safety gate in front of the action layer
+        (§3.13).
         """
         if req.kind == "ask_user":
             question = req.payload.get("question")
@@ -432,7 +453,85 @@ class App:
         if req.kind == "shell" and isinstance(req.payload.get("open_app"), str):
             result: ShellResult = self.pack.open_app(req.payload["open_app"])
             return ActionResult(ok=result.ok, observation=result.detail)
+        if req.kind == "create_task":
+            return self._create_task(req)
         return self._gated_execute(req)
+
+    def _create_task(self, req: ActionRequest) -> ActionResult:
+        """M4 (§3.12): the LLM registers a background task through this seam.
+
+        The payload is validated HERE — pydantic for the monitor, the 30 s
+        interval floor for LLM-created monitors, monitor/schedule presence per
+        mode — and the task is registered with the TaskManager, which starts
+        its long-lived loop and reports by voice later. Every refusal is an
+        ActionResult(ok=False) observation (the model reacts; nothing is
+        registered); register()'s own ValueError (e.g. an unparseable monitor
+        target) lands in the same place.
+        """
+        payload = req.payload
+        instruction = payload.get("instruction")
+        if not isinstance(instruction, str) or not instruction.strip():
+            return _invalid_create_task("instruction must be a non-empty string")
+        mode = payload.get("mode")
+        if not isinstance(mode, str) or mode not in BACKGROUND_MODES:
+            return _invalid_create_task(
+                f"mode must be one of {', '.join(sorted(BACKGROUND_MODES))}"
+            )
+        monitor: MonitorSpec | None = None
+        raw_monitor = payload.get("monitor")
+        if raw_monitor is not None:
+            if not isinstance(raw_monitor, dict):
+                return _invalid_create_task("monitor must be an object")
+            try:
+                monitor = MonitorSpec.model_validate(raw_monitor)
+            except ValidationError as exc:
+                errors = "; ".join(
+                    f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                    for error in exc.errors()
+                )
+                return _invalid_create_task(f"monitor is invalid ({errors})")
+            if monitor.interval_s < MONITOR_MIN_INTERVAL_S:
+                return _invalid_create_task(
+                    f"interval_s must be at least {MONITOR_MIN_INTERVAL_S} seconds "
+                    f"for LLM-created monitors (got {monitor.interval_s})"
+                )
+        schedule: datetime | None = None
+        raw_schedule = payload.get("schedule")
+        if raw_schedule is not None:
+            if not isinstance(raw_schedule, str) or not raw_schedule.strip():
+                return _invalid_create_task("schedule must be an ISO-8601 string")
+            try:
+                schedule = datetime.fromisoformat(raw_schedule)
+            except ValueError:
+                return _invalid_create_task(
+                    f"schedule {raw_schedule!r} is not an ISO-8601 date-time"
+                )
+        if mode == "background_monitor" and monitor is None:
+            return _invalid_create_task(
+                "background_monitor requires a monitor (kind, target, interval_s, condition)"
+            )
+        if mode == "scheduled" and schedule is None:
+            return _invalid_create_task("scheduled requires a schedule (ISO-8601)")
+        spec = TaskSpec(
+            id=uuid.uuid4().hex[:8],
+            instruction=instruction.strip(),
+            mode=cast(TaskMode, mode),
+            monitor=monitor,
+            schedule=schedule,
+            created_by="llm",
+        )
+        try:
+            self.manager.register(spec)
+        except ValueError as exc:
+            return _invalid_create_task(str(exc))
+        logger.info("create_task: %s registered (%s)", spec.id, mode)
+        return ActionResult(
+            ok=True,
+            observation=(
+                f"background task {spec.id} created ({mode}) — it runs on its own and "
+                "reports by voice; finish and tell the user what will happen"
+            ),
+        )
 
     def _build_activation(self, settings: Settings) -> None:
         """D2: the activation setting decides which channels get wired."""
@@ -466,7 +565,16 @@ class App:
                 if self.mascot is not None:
                     self.mascot.set_state("acting")
             elif event.type in ("result", "failed"):
-                self.tts.say(SpeakRequest(text=event.payload, priority="result"))
+                # M4 (§3.12): background tasks report UNPROMPTED — the user is
+                # possibly mid-sentence, so those utterances go out at the
+                # background priority and never barge in. One-shot submits
+                # have no registered mode (task_mode → None) → foreground
+                # turns keep the "result" priority.
+                mode = self.manager.task_mode(event.task_id)
+                priority: Literal["ack", "result", "background"] = (
+                    "background" if mode in BACKGROUND_MODES else "result"
+                )
+                self.tts.say(SpeakRequest(text=event.payload, priority=priority))
                 if self.mascot is not None:
                     self.mascot.set_state("speaking" if event.type == "result" else "error")
 

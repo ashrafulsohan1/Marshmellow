@@ -50,7 +50,10 @@ from marshmellow.planner.tools import ScreenToolbox
 from marshmellow.safety.gate import SafetyGate
 from marshmellow.safety.policy import RiskPolicy
 
-M3_TOOL_NAMES = {"open_app", "get_elements", "screenshot", "act", "wait", "ask_user", "finish"}
+# M4 Task 4: create_task joins the M3 set (LLM-created background tasks, §3.12).
+M3_TOOL_NAMES = {
+    "open_app", "get_elements", "screenshot", "act", "wait", "ask_user", "create_task", "finish",
+}
 M2_TOOL_NAMES = {"open_app", "wait", "ask_user", "finish"}
 ESCALATION = "verification failed 3× on this element — ask the user or finish(ok=false)"
 

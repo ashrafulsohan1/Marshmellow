@@ -28,6 +28,8 @@ from marshmellow.core.contracts import (
     WindowInfo,
 )
 from marshmellow.planner.orchestrator import (
+    M2_TOOLS,
+    M3_TOOLS,
     PROMPT_VERSION,
     LLMPlanner,
     load_system_prompt,
@@ -385,3 +387,149 @@ def test_system_prompt_is_versioned_and_wired() -> None:
     user_msg = first.messages[1].content
     assert "open notepad" in user_msg  # the instruction text
     assert "Code" in user_msg  # context: active window app
+
+
+# -- M4 Task 4: create_task — the LLM registers background tasks -----------------
+
+
+def _spec_names(tools: tuple[dict[str, object], ...]) -> set[str]:
+    names: set[str] = set()
+    for tool in tools:
+        function = tool.get("function")
+        if isinstance(function, dict) and isinstance(function.get("name"), str):
+            names.add(str(function["name"]))
+    return names
+
+
+def _find_spec(name: str) -> dict[object, object]:
+    for tool in M3_TOOLS:
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name") == name:
+            return function
+    raise AssertionError(f"{name} not offered by M3_TOOLS")
+
+
+def test_create_task_tool_joins_the_m3_set_only() -> None:
+    assert "create_task" in _spec_names(M3_TOOLS)
+    assert "create_task" not in _spec_names(M2_TOOLS)  # M2 traces stay unchanged
+
+    spec = _find_spec("create_task")
+    parameters = spec["parameters"]
+    assert isinstance(parameters, dict)
+    properties = parameters["properties"]
+    assert isinstance(properties, dict)
+    assert parameters["required"] == ["instruction", "mode"]
+    mode = properties["mode"]
+    assert isinstance(mode, dict)
+    assert mode["enum"] == ["background_monitor", "background_job", "scheduled"]
+    monitor = properties["monitor"]
+    assert isinstance(monitor, dict)
+    monitor_properties = monitor["properties"]
+    assert isinstance(monitor_properties, dict)
+    kind = monitor_properties["kind"]
+    assert isinstance(kind, dict)
+    assert kind["enum"] == ["url_diff", "api_field", "file_hash", "rss"]
+    interval = monitor_properties["interval_s"]
+    assert isinstance(interval, dict)
+    assert interval["minimum"] == 30  # no hot loops from the model (M4 pinned)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_payload"),
+    [
+        (
+            {
+                "instruction": "watch this channel and tell me when they upload",
+                "mode": "background_monitor",
+                "monitor": {
+                    "kind": "rss",
+                    "target": "https://example.com/feed.xml",
+                    "interval_s": 300,
+                    "condition": "a new upload",
+                },
+            },
+            {
+                "instruction": "watch this channel and tell me when they upload",
+                "mode": "background_monitor",
+                "monitor": {
+                    "kind": "rss",
+                    "target": "https://example.com/feed.xml",
+                    "interval_s": 300,
+                    "condition": "a new upload",
+                },
+            },
+        ),
+        (
+            {
+                "instruction": "open calculator in an hour",
+                "mode": "scheduled",
+                "schedule": "2026-11-06T13:00:00",
+            },
+            {
+                "instruction": "open calculator in an hour",
+                "mode": "scheduled",
+                "schedule": "2026-11-06T13:00:00",
+            },
+        ),
+    ],
+    ids=["monitor-mode", "scheduled-mode"],
+)
+def test_create_task_call_maps_to_the_request_payload_intact(
+    arguments: dict[str, object], expected_payload: dict[str, object]
+) -> None:
+    llm = ScriptedLLM(
+        [
+            LLMResponse(
+                tool_calls=[_call("create_task", **arguments)], stop_reason="tool_calls"
+            ),
+            LLMResponse(
+                tool_calls=[_call("finish", ok=True, summary_to_speak="Watching it.")],
+                stop_reason="tool_calls",
+            ),
+        ]
+    )
+    execute, executed = _executor()
+
+    result = LLMPlanner(provider=llm).run(_instruction("watch this channel"), execute)
+
+    assert len(executed) == 1
+    req = executed[0]
+    assert req.kind == "create_task"
+    assert req.payload == expected_payload  # monitor dict / schedule string intact
+    assert req.risk == "L1"
+    assert result.ok
+    # verify-lite: the registration result reached the model before finish
+    assert "window appeared" in llm.requests[1].messages[-1].content
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"mode": "background_monitor"},  # instruction missing
+        {"instruction": "watch", "mode": "yesterday"},  # mode outside the enum
+        {"instruction": "watch", "mode": "background_monitor", "monitor": "notepad"},
+    ],
+    ids=["no-instruction", "bad-mode", "monitor-not-an-object"],
+)
+def test_create_task_bad_args_are_invalid_observations(arguments: dict[str, object]) -> None:
+    llm = ScriptedLLM(
+        [
+            LLMResponse(
+                tool_calls=[_call("create_task", **arguments)], stop_reason="tool_calls"
+            ),
+            LLMResponse(
+                tool_calls=[
+                    _call("finish", ok=False, summary_to_speak="I couldn't set that up.")
+                ],
+                stop_reason="tool_calls",
+            ),
+        ]
+    )
+    execute, executed = _executor()
+
+    result = LLMPlanner(provider=llm).run(_instruction("watch something"), execute)
+
+    assert executed == []  # nothing reached the executor
+    fed_back = llm.requests[1].messages[-1].content
+    assert "ERROR" in fed_back and "invalid" in fed_back  # the model is told, not crashed
+    assert not result.ok

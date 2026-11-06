@@ -101,7 +101,7 @@ RiskLevel = Literal["L0", "L1", "L2", "L3"]
 ActionKind = Literal[
     "uia_invoke", "uia_toggle", "uia_set_value", "uia_select", "click", "double_click",
     "right_click", "type_text", "hotkey", "scroll", "focus_window", "shell", "wait",
-    "ask_user", "done", "fail",
+    "ask_user", "done", "fail", "create_task",
 ]
 
 
