@@ -269,3 +269,65 @@ async def test_missing_monitor_is_refused(tmp_path: Path) -> None:
     assert "ERROR" in fed_back
     assert "invalid create_task payload" in fed_back
     assert "monitor" in fed_back
+
+
+# -- review fix: tz-aware schedules must not kill the scheduled loop --------------
+
+
+async def test_tz_aware_schedule_is_normalized_and_the_task_runs(tmp_path: Path) -> None:
+    """A schedule with a timezone designator ("...Z" — valid ISO-8601 that the
+    create_task schema and App validation both accept) used to TypeError the
+    scheduled loop's naive-clock comparison (``is_due(now, due)``): the loop task
+    died with an unretrieved exception and the handle was stuck "waiting" forever
+    — no failed event, no spoken report. register() now normalizes to the local
+    wall clock its clock seam produces, so the task runs and completes like any
+    scheduled task and reports at the background priority."""
+    schedule_text = "2026-11-06T13:00:00Z"
+    due = datetime.fromisoformat(schedule_text).astimezone().replace(tzinfo=None)
+    provider = ScenarioProvider(
+        [
+            LLMToolCall(
+                name="create_task",
+                arguments={
+                    "instruction": "open calculator at 13:00 UTC",
+                    "mode": "scheduled",
+                    "schedule": schedule_text,
+                },
+            ),
+            LLMToolCall(
+                name="finish",
+                arguments={"ok": True, "summary_to_speak": "Scheduled for later."},
+            ),
+            LLMToolCall(  # the scheduled turn, once the clock passes the due instant
+                name="finish",
+                arguments={"ok": True, "summary_to_speak": "Running it now."},
+            ),
+        ]
+    )
+    clock = FakeClock()
+    app = _create_task_app(tmp_path, provider, clock, RecordingSleeper(clock))
+    try:
+        handle = await app.submit_text("open calculator at 13:00 UTC")
+
+        assert handle.result is not None and handle.result.ok, str(handle.result)
+        await _until(lambda: bool(app.manager.list_tasks()))
+        scheduled = app.manager.list_tasks()[0]
+        assert scheduled.spec.mode == "scheduled"
+        assert scheduled.spec.schedule is not None
+        assert scheduled.spec.schedule.tzinfo is None  # normalized — comparable
+        assert scheduled.spec.schedule == due
+
+        delay = (due - NOW).total_seconds() + 1
+        if delay > 0:  # past-due schedules (machines west of UTC) run immediately
+            clock.advance(delay)
+        await _until(lambda: scheduled.state == "completed")
+
+        assert scheduled.result is not None and scheduled.result.ok
+        assert scheduled.result.summary_to_speak == "Running it now."
+        # scheduled is a background class: its report is spoken unprompted
+        assert any(
+            s.priority == "background" and s.text == "Running it now."
+            for s in app.tts.spoken
+        ), f"no background report for the scheduled run: {app.tts.spoken}"
+    finally:
+        app.stop()

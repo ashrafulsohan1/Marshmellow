@@ -214,7 +214,9 @@ class TaskManager:
         built (``make_check`` ValueError on an unparseable target) raises HERE —
         synchronously, nothing registered — because a failure inside the
         marshaled spawn coroutine would leave the handle a silent "pending"
-        zombie (the caller, e.g. the create_task path, can still react).
+        zombie (the caller, e.g. the create_task path, can still react). A
+        tz-aware scheduled spec is normalized to the naive-local wall clock the
+        clock seam produces (the loops compare against ``self._clock()``).
         """
         if spec.mode not in BACKGROUND_MODES:
             raise ValueError(
@@ -228,8 +230,20 @@ class TaskManager:
             # Built HERE, on the caller thread, before anything is registered —
             # make_check validates the target format and must fail fast.
             check = self._check_factory(spec.monitor)
-        if spec.mode == "scheduled" and spec.schedule is None:
-            raise ValueError("scheduled requires spec.schedule")
+        if spec.mode == "scheduled":
+            if spec.schedule is None:
+                raise ValueError("scheduled requires spec.schedule")
+            if spec.schedule.tzinfo is not None:
+                # M4-T4 review fix: the loops compare spec.schedule against the
+                # NAIVE-LOCAL clock seam (self._clock / datetime.now). A tz-aware
+                # schedule ("…Z" / "+hh:mm" — valid ISO-8601 the create_task path
+                # accepts) would TypeError _wait_for_runnable's comparison and
+                # kill the loop task silently (handle stuck "waiting", no failed
+                # event). Normalize to the local wall clock the seam produces —
+                # the caller's spec object is not mutated (model_copy).
+                spec = spec.model_copy(
+                    update={"schedule": spec.schedule.astimezone().replace(tzinfo=None)}
+                )
         self.start()
         handle = TaskHandle(spec=spec)
         self._handles[spec.id] = handle
