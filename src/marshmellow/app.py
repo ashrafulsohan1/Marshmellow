@@ -56,6 +56,7 @@ from marshmellow.core.contracts import (
     TaskEvent,
     TaskMode,
     TaskSpec,
+    TaskState,
     WindowInfo,
 )
 from marshmellow.core.logging import setup_logging
@@ -74,6 +75,7 @@ if TYPE_CHECKING:
     from marshmellow.safety.confirm import ConfirmFlow
     from marshmellow.tasks.foreground import ForegroundLease
     from marshmellow.tts.piper import PiperSpeaker
+    from marshmellow.ui.main_window import GuiMarshal, TasksDashboard
     from marshmellow.ui.mascot import Mascot
     from marshmellow.ui.tray import Tray
 
@@ -180,12 +182,20 @@ class App:
         # to "listening" (§3.13); the engine stays UI-free in headless mode.
         self.mascot: Mascot | None = None
         self.tray: Tray | None = None
+        # The tasks dashboard (§3.11, M4 T6) is built LAZILY on the GUI thread
+        # the first time the tray's open_ui arrives — never headless.
+        self._dashboard: TasksDashboard | None = None
+        self._open_ui_marshal: GuiMarshal | None = None
         if not headless:
+            from marshmellow.ui.main_window import GuiMarshal
             from marshmellow.ui.mascot import Mascot
             from marshmellow.ui.tray import Tray
 
             self.mascot = Mascot(bus=self.bus)
             self.tray = Tray(bus=self.bus)
+            # The bus dispatches this handler on its drain thread; GuiMarshal
+            # hops the request to the GUI thread before any widget is touched.
+            self._open_ui_marshal = GuiMarshal(self._open_dashboard)
             self.bus.subscribe(TrayAction, self._on_tray_action)
         self.perception = perception if perception is not None else self._build_perception()
         self.action_layer = (
@@ -250,6 +260,8 @@ class App:
         if self.wake_watcher is not None:
             self.wake_watcher.stop()
         self.tts.quit()  # full teardown (piper: terminate subprocess); stop() is only barge-in
+        if self._dashboard is not None:  # runs on the GUI thread (entry-point poller)
+            self._dashboard.close()
         if self.mascot is not None:
             self.mascot.close()
         self.manager.stop()  # before bus.stop(): loop teardown events still dispatch
@@ -264,8 +276,35 @@ class App:
 
     @property
     def quit_requested(self) -> bool:
-        """Tray quit sets this; the app entry loop polls it (never joins from the bus)."""
+        """Tray quit sets this; the app entry loop polls it (never joins from the bus thread)."""
         return self._quit_requested
+
+    @property
+    def dashboard(self) -> TasksDashboard | None:
+        """The tasks dashboard once summoned (None until the first open_ui)."""
+        return self._dashboard
+
+    # -- TaskDirectory seam (§3.11 dashboard; the manager's view, verbatim) ------
+
+    def list_tasks(self, state: TaskState | None = None) -> list[TaskHandle]:
+        return self.manager.list_tasks(state)
+
+    def control(
+        self, task_id: str, cmd: Literal["pause", "resume", "cancel", "run_now"]
+    ) -> bool:
+        return self.manager.control(task_id, cmd)
+
+    def _open_dashboard(self) -> None:
+        """GUI thread only (via GuiMarshal): lazily build + summon the dashboard.
+
+        The dashboard is created here — never on a bus thread — and stays the
+        ONE main window for the app's lifetime: dismissed = hidden, re-summoned
+        with its trace history intact (§3.11 "summoned, not resident")."""
+        if self._dashboard is None:
+            from marshmellow.ui.main_window import TasksDashboard
+
+            self._dashboard = TasksDashboard(bus=self.bus, tasks=self)
+        self._dashboard.show_dashboard()
 
     def _build_stt(self) -> Transcriber:
         """Real faster-whisper for live runs; the fake keeps headless runs silent-fast."""
@@ -595,4 +634,9 @@ class App:
     def _on_tray_action(self, action: TrayAction) -> None:
         if action.kind == "quit":
             self._quit_requested = True  # the app loop polls this; never join from the bus thread
+        elif action.kind == "open_ui":
+            # This handler runs on the bus drain thread; widgets must live on
+            # the GUI thread — hop over (non-blocking; §3.11, M4 T6).
+            if self._open_ui_marshal is not None:  # subscribed only in GUI mode
+                self._open_ui_marshal.request()
         logger.info("tray action: %s", action.kind)
