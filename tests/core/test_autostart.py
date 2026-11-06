@@ -1,4 +1,4 @@
-"""Tests for core.autostart — Task Scheduler on-logon toggle (D3, closes OQ-6)."""
+"""Tests for core.autostart — HKCU Run-key toggle (D3, closes OQ-6)."""
 
 import subprocess
 import sys
@@ -25,25 +25,28 @@ def fake_runner(
     return run
 
 
+RUN_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+
+
 def test_build_create_command_exact_argv() -> None:
     argv = autostart.build_create_command(LAUNCH_SPACES)
     assert argv == [
-        "schtasks",
-        "/Create",
-        "/F",
-        "/TN",
+        "reg",
+        "add",
+        RUN_KEY,
+        "/v",
         "Marshmellow",
-        "/SC",
-        "ONLOGON",
-        "/RL",
-        "LIMITED",
-        "/TR",
-        # /TR value pinned verbatim: the launch wrapped in ONE outer pair of
-        # double quotes while the executable path stays quoted inside — schtasks'
-        # standard form. Both layers are needed because CreateProcess re-parses
-        # the command line; subprocess.list2cmdline escapes each embedded quote
-        # so they reach the task action intact.
-        '""C:\\Program Files\\Marshmellow\\Marshmellow.exe" --tray"',
+        "/t",
+        "REG_SZ",
+        "/d",
+        # Data element pinned verbatim: the launch itself — executable path
+        # quoted inside, NO extra outer quote pair. reg.exe stores the argv
+        # element as-is (measured: query echoes the inner-quoted spaced path
+        # back unchanged) and Explorer runs the value through CreateProcess at
+        # logon, so the inner quotes are what make the spaced path survive; an
+        # outer pair would be stored literally into the value and break it.
+        '"C:\\Program Files\\Marshmellow\\Marshmellow.exe" --tray',
+        "/f",
     ]
 
 
@@ -65,7 +68,7 @@ def test_enable_uses_launch_command(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_is_enabled_true_false_and_error() -> None:
     calls: list[list[str]] = []
     assert autostart.is_autostart_enabled(runner=fake_runner(0, calls)) is True
-    assert calls == [["schtasks", "/Query", "/TN", "Marshmellow"]]
+    assert calls == [["reg", "query", RUN_KEY, "/v", "Marshmellow"]]
 
     assert autostart.is_autostart_enabled(runner=fake_runner(1)) is False
 
@@ -78,7 +81,7 @@ def test_is_enabled_true_false_and_error() -> None:
 def test_disable() -> None:
     calls: list[list[str]] = []
     assert autostart.disable_autostart(runner=fake_runner(0, calls)) is True
-    assert calls == [["schtasks", "/Delete", "/TN", "Marshmellow", "/F"]]
+    assert calls == [["reg", "delete", RUN_KEY, "/v", "Marshmellow", "/f"]]
 
     assert autostart.disable_autostart(runner=fake_runner(1)) is False
 
