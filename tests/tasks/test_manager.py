@@ -721,30 +721,209 @@ async def test_restore_registers_scheduled_task(tmp_path: Path) -> None:
 
 
 async def test_restore_preserves_paused(tmp_path: Path) -> None:
-    """A stored 'paused' row comes back paused: the loop parks (no checks even
-    when the clock runs past due), resume() applies, and the baseline still
-    traveled into the first check."""
+    """A stored 'paused' row comes back parked BEFORE its first check (M4 T5
+    review fix): the watched source may have changed during the downtime, but
+    a paused task never checks, let alone reports, while paused — the
+    accumulated change reports only after the user resumes, against the
+    traveled baseline."""
     store = _store(tmp_path)
-    check = ScriptedCheck([_unchanged("v1")])
+    check = ScriptedCheck([_changed("v2")])
     store.save([StoredTask(spec=_monitor_spec("m1"), baseline="v1", state="paused")])
 
     clock = FakeClock()
     sleeper = RecordingSleeper(clock)
     sleeper.advance_ratio = 0.0
     bus = EventBus()
+    events: list[TaskEvent] = []
+    bus.subscribe(TaskEvent, events.append)
     manager = _background_manager(bus, [], {_URL: check}, clock, sleeper, store=store)
 
     assert manager.restore() == 1
     h = manager.handle("m1")
     assert h is not None
-    await _until(lambda: len(check.baselines) == 1)
-    assert check.baselines == ["v1"], "the first check compared against the stored baseline"
     await _until(lambda: h.state == "paused")
+    assert check.baselines == [], "a restored-paused monitor must not check while parked"
     assert [r.state for r in store.load()] == ["paused"], "the pause reached the store"
 
-    clock.advance(4000)
+    clock.advance(4000)  # far past any due instant: still parked, still silent
     await asyncio.sleep(0.05)
-    assert len(check.baselines) == 1, "a restored-paused monitor must not check"
-    assert manager.control("m1", "resume") is True, "the pause is real (resume applies)"
+    assert check.baselines == [] and h.state == "paused"
+    assert not [e for e in events if e.task_id == "m1" and e.type == "result"], (
+        "a paused task must not report the downtime change"
+    )
+
+    assert manager.control("m1", "resume") is True
+    clock.advance(4000)  # past resume's recomputed next_due (0.9·60 with rng=0.0)
+    await _until(lambda: h.state == "completed")
+    assert check.baselines == ["v1"], "the stored baseline still traveled into the first check"
+    assert [e.type for e in events if e.task_id == "m1"] == ["started", "result"]
+    manager.stop()
+    bus.stop()
+
+
+async def test_terminal_scheduled_turn_not_persisted(tmp_path: Path) -> None:
+    """A scheduled task's terminal states are set in _run_planner_turn —
+    completed AND failed turns must drop their row there (M4 T5 review fix:
+    the stale live-state row survived, restore() re-registered it, and the
+    past-due schedule re-executed the planner turn at every startup)."""
+    store = _store(tmp_path)
+    clock = FakeClock()
+    sleeper = RecordingSleeper(clock)
+    bus = EventBus()
+    executed: list[ActionRequest] = []
+    # D6 (§3.12): "open notepad" touches the screen — the scheduled turn needs
+    # a granted foreground lease or the action is refused and the task fails.
+    manager = _background_manager(
+        bus, executed, {}, clock, sleeper,
+        lease=ForegroundLease(bus=bus, confirm=GrantedConfirmer()), store=store,
+    )
+
+    handle = manager.register(
+        TaskSpec(
+            id="s1",
+            instruction="open notepad",
+            mode="scheduled",
+            schedule=clock() + timedelta(seconds=90),
+        )
+    )
+    await _until(lambda: handle.state == "completed")
+    assert store.load() == [], "completed scheduled → row dropped"
+
+    def failing_execute(req: ActionRequest) -> ActionResult:
+        return ActionResult(ok=False, observation="no such app")
+
+    bus2 = EventBus()
+    failed_manager = TaskManager(
+        bus=bus2,
+        planner=FakePlanner(),
+        execute=failing_execute,
+        clock=clock,
+        rng=lambda: 0.0,
+        sleeper=sleeper,
+        store=store,
+        lease=ForegroundLease(bus=bus2, confirm=GrantedConfirmer()),
+    )
+    failed = failed_manager.register(
+        TaskSpec(
+            id="s2",
+            instruction="open zappt",
+            mode="scheduled",
+            schedule=clock() + timedelta(seconds=90),
+        )
+    )
+    await _until(lambda: failed.state == "failed")
+    assert store.load() == [], "failed scheduled → row dropped"
+    manager.stop()
+    failed_manager.stop()
+    bus.stop()
+    bus2.stop()
+
+
+async def test_graceful_stop_keeps_rows(tmp_path: Path) -> None:
+    """manager.stop() (the App.exit path) cancels the loops, but that is NOT a
+    user cancel: the store keeps the live rows so the tasks come back after
+    restart (M4 T5 review repro scenario 2 — the mid-turn scheduled row was
+    dropped by the turn's cancel persist)."""
+    store = _store(tmp_path)
+    clock = FakeClock()
+    sleeper = RecordingSleeper(clock)
+
+    class BlockingPlanner:
+        def run(self, instruction: Instruction, execute: Executor) -> TaskResult:
+            time.sleep(0.3)  # the turn is mid-flight when stop() lands
+            return TaskResult(ok=True, summary_to_speak="done")
+
+    bus = EventBus()
+    manager = TaskManager(
+        bus=bus,
+        planner=BlockingPlanner(),
+        execute=lambda req: ActionResult(ok=True, observation="did it"),
+        clock=clock,
+        rng=lambda: 0.0,
+        sleeper=sleeper,
+        store=store,
+    )
+    handle = manager.register(
+        TaskSpec(
+            id="s1",
+            instruction="open notepad",
+            mode="scheduled",
+            schedule=clock() - timedelta(seconds=1),  # past due: the turn starts now
+        )
+    )
+    await _until(lambda: handle.state == "running")
+
+    manager.stop()  # graceful exit mid-turn
+    assert handle.state == "cancelled"
+    assert [r.spec.id for r in store.load()] == ["s1"], (
+        "a graceful stop must keep the row so the task comes back after restart"
+    )
+    bus.stop()
+
+
+class _BrokenStore(TaskStore):
+    """A store whose every write fails (disk full / permissions)."""
+
+    def save(self, tasks: list[StoredTask]) -> None:
+        raise OSError("disk full")
+
+
+async def test_persist_failure_never_kills_a_monitor_loop(tmp_path: Path, caplog) -> None:
+    """_persist is best effort: a failing store write is logged and swallowed —
+    the monitor loop keeps cycling (only CancelledError may escape a loop; a
+    persist raise would be the M4-T4 silent-loop-death mode)."""
+    clock = FakeClock()
+    sleeper = RecordingSleeper(clock)
+    sleeper.advance_ratio = 0.0
+    check = ScriptedCheck([_unchanged("v1")])
+    bus = EventBus()
+    manager = _background_manager(
+        bus, [], {_URL: check}, clock, sleeper, store=_BrokenStore(tmp_path / "tasks.json")
+    )
+
+    handle = manager.register(_monitor_spec("m1"))
+    await _until(lambda: handle.state == "waiting")  # register- + check-persist survived
+    clock.advance(4000)
+    await _until(lambda: len(check.baselines) >= 2)  # the loop is still cycling
+    assert any("could not save the task store" in r.message for r in caplog.records)
+    manager.stop()
+    bus.stop()
+
+
+def test_persist_snapshot_never_races_concurrent_register(tmp_path: Path, caplog) -> None:
+    """register() runs on caller threads (the create_task path) while the
+    resident loop persists after every check: the snapshot is taken under the
+    same lock as the insert, so 'dictionary changed size during iteration'
+    never escapes _persist (M4 T5 review repro: escaped 50/50 attempts and
+    would kill the loop silently)."""
+    store = _store(tmp_path)
+    clock = FakeClock()
+    sleeper = RecordingSleeper(clock)
+    sleeper.advance_ratio = 0.0
+    check = ScriptedCheck([_unchanged("v1")])
+    bus = EventBus()
+    manager = _background_manager(bus, [], {_URL: check}, clock, sleeper, store=store)
+    manager.start()
+
+    failures: list[Exception] = []
+
+    def registerer() -> None:
+        try:
+            for i in range(150):
+                manager.register(_monitor_spec(f"r{i}", interval_s=10_000_000))
+        except Exception as exc:
+            failures.append(exc)
+
+    thread = threading.Thread(target=registerer, name="registerer")
+    thread.start()
+    while thread.is_alive():
+        manager._persist()  # hammers the snapshot while the dict grows
+    thread.join()
+
+    assert not failures, failures
+    assert len(store.load()) == 150, "every registration reached the store"
+    assert not [r for r in caplog.records if "could not save the task store" in r.message], (
+        "the snapshot must be race-free, not merely guarded by the swallow"
+    )
     manager.stop()
     bus.stop()
