@@ -34,10 +34,13 @@ READ_KINDS: frozenset[str] = frozenset({"wait", "ask_user", "done", "fail", "cre
 class ForegroundLease:
     """Single-holder consent token for background screen access (§3.12 D6).
 
-    Thread-safe: planner turns run on worker threads and may ask concurrently,
-    so consent is serialized — one spoken question at a time, holder
-    bookkeeping atomic. A request while another task holds the lease refuses
-    without asking the user again.
+    Thread discipline: consent is modal — one spoken question at a time, so
+    ``request`` serializes on the lock and HOLDS it across the ask (up to the
+    ConfirmFlow's re-ask + fallback, tens of seconds). That is safe only
+    because request() runs on planner WORKER threads; release() runs on
+    event-loop threads (the turn's finally), so it NEVER takes the lock
+    blocking (see release). A request while another task holds the lease (or
+    while its consent is in flight) refuses without asking the user again.
     """
 
     def __init__(
@@ -48,13 +51,18 @@ class ForegroundLease:
         self._mascot = mascot
         self._holder: str | None = None
         self._lock = threading.Lock()
+        # Releases that lost the race with an in-flight consent (kill during
+        # the ask): the pending request() honors them instead of granting a
+        # lease to a turn that is already gone.
+        self._deferred: set[str] = set()
 
     def request(self, task_id: str, purpose: str) -> bool:
         """Ask the user for the screen; True grants the lease to `task_id`.
 
         Emits ``lease_request`` (payload = purpose), shows the mascot
         "attention" state, then confirms out loud. Granted → mascot "acting";
-        refused (or held by another task) → mascot "idle", False.
+        refused (or held by another task, or the turn ended mid-ask) → mascot
+        "idle", False. BLOCKING — worker threads only, never a loop thread.
         """
         with self._lock:
             if self._holder == task_id:
@@ -66,31 +74,55 @@ class ForegroundLease:
                     task_id,
                 )
                 return False
+            self._deferred.discard(task_id)  # a fresh ask supersedes stale tombstones
             self._bus.emit(TaskEvent(task_id=task_id, type="lease_request", payload=purpose))
             if self._mascot is not None:
                 self._mascot.set_state("attention")
-            if not self._confirm.confirm(f"I need the screen to {purpose} — OK?"):
+            granted = self._confirm.confirm(f"I need the screen to {purpose} — OK?")
+            if task_id in self._deferred:
+                # The turn's finally ran while we were asking (kill / barge-in
+                # cancelled it): the grant must not outlive the turn.
+                self._deferred.discard(task_id)
+                granted = False
+            if granted:
+                self._holder = task_id
+                if self._mascot is not None:
+                    self._mascot.set_state("acting")
+                logger.info("foreground lease granted to %s (%s)", task_id, purpose)
+            else:
                 logger.info("foreground lease refused for %s (%s)", task_id, purpose)
                 if self._mascot is not None:
                     self._mascot.set_state("idle")
-                return False
-            self._holder = task_id
-            if self._mascot is not None:
-                self._mascot.set_state("acting")
-            logger.info("foreground lease granted to %s (%s)", task_id, purpose)
-            return True
+            return granted
 
     def release(self, task_id: str) -> None:
-        """Give the screen back (no-op when `task_id` is not the holder)."""
-        with self._lock:
-            if self._holder != task_id:
-                return
-            self._holder = None
-            if self._mascot is not None:
-                self._mascot.set_state("idle")
-            logger.info("foreground lease released by %s", task_id)
+        """Give the screen back (no-op when `task_id` is not the holder).
+
+        NEVER BLOCKS — the caller is an event-loop thread (the turn's
+        finally), and the lock is held across in-flight consents. A busy lock
+        means a consent is mid-ask; it only started when nobody held, so this
+        release is either a no-op (another task wins the ask) or races with
+        OUR OWN ask — tombstoned here and honored by that ask before it could
+        grant a lease to a dead turn.
+        """
+        if self._lock.acquire(blocking=False):
+            try:
+                if self._holder == task_id:
+                    self._holder = None
+                    if self._mascot is not None:
+                        self._mascot.set_state("idle")
+                    logger.info("foreground lease released by %s", task_id)
+            finally:
+                self._lock.release()
+        else:
+            self._deferred.add(task_id)
 
     def held_by(self) -> str | None:
-        """The task currently holding the lease (None when free)."""
-        with self._lock:
-            return self._holder
+        """The task currently holding the lease (None when free).
+
+        Lock-free on purpose: a GIL-atomic attribute read. Taking the lock
+        could park a planner worker behind an in-flight consent for the length
+        of a spoken ask; a stale reading is safe because request() re-checks
+        under the lock before granting.
+        """
+        return self._holder

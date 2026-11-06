@@ -12,6 +12,7 @@ so the planner can purge them at task end through :class:`ArtifactPurger`.
 
 from __future__ import annotations
 
+import copy
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -49,6 +50,20 @@ class PlannerTools(Protocol):
     def get_elements(self, query: str | None) -> str: ...
     def screenshot(self) -> str: ...
     def act(self, req: ActionRequest) -> ActionResult: ...
+
+
+@runtime_checkable
+class TurnScopedTools(Protocol):
+    """A toolbox that can re-bind its executor for ONE planner turn (§3.12 D6).
+
+    TaskManager hands the planner a per-turn executor (kill check + the
+    foreground lease in front of the safety gate); the constructor-time
+    executor has neither, so an act through it would let a background turn
+    touch the screen without consent. The orchestrator rebinds every run
+    (``isinstance(toolbox, TurnScopedTools)`` — the ArtifactPurger pattern).
+    """
+
+    def with_executor(self, execute: Executor) -> PlannerTools: ...
 
 
 class SnapshotSource(Protocol):
@@ -137,6 +152,19 @@ class ScreenToolbox:
             )
         self._remember(result.snapshot_after)
         return result
+
+    def with_executor(self, execute: Executor) -> ScreenToolbox:
+        """One planner turn's view of this toolbox, acting through `execute`.
+
+        TaskManager hands the planner a PER-TURN executor (kill check + D6
+        foreground lease before the safety gate); an act through the raw
+        constructor-time executor would bypass that consent (§3.12 D6).
+        A shallow copy keeps the subclass and shares perception, registry and
+        the artifact LIST, so artifacts recorded by the view are still purged
+        at task end by the original's ``purge()``."""
+        view = copy.copy(self)
+        view._execute = execute
+        return view
 
     def purge(self) -> None:
         """Delete every screenshot/marked-image file this turn produced (§3.15)."""

@@ -407,6 +407,8 @@ class TaskManager:
         finally:
             if self._lease is not None:
                 # D6: the turn is over — the screen goes back, granted or not.
+                # release() never blocks (this is a LOOP thread; the lease may
+                # have an in-flight consent on a worker thread).
                 self._lease.release(spec.id)
             self._running.pop(spec.id, None)
             self._kills.pop(spec.id, None)

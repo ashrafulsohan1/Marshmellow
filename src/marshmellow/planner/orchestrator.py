@@ -69,7 +69,7 @@ from marshmellow.core.contracts import (
     TaskResult,
 )
 from marshmellow.llm.base import LLMProvider
-from marshmellow.planner.tools import ArtifactPurger, PlannerTools
+from marshmellow.planner.tools import ArtifactPurger, PlannerTools, TurnScopedTools
 
 logger = logging.getLogger(__name__)
 
@@ -456,7 +456,7 @@ class LLMPlanner:
 
     def _execute_tool(self, call: LLMToolCall, execute: Executor) -> ActionResult:
         if self._toolbox is not None and call.name in _TOOLBOX_TOOLS:
-            return self._run_toolbox_tool(call)
+            return self._run_toolbox_tool(call, execute)
         request = self._as_request(call)
         if request is None:
             return ActionResult(
@@ -474,13 +474,22 @@ class LLMPlanner:
                 ok=False, observation="the action executor crashed", error=repr(exc)
             )
 
-    def _run_toolbox_tool(self, call: LLMToolCall) -> ActionResult:
+    def _run_toolbox_tool(self, call: LLMToolCall, execute: Executor) -> ActionResult:
         """get_elements/screenshot/act through the toolbox; failures are observations."""
         toolbox = self._toolbox
         if toolbox is None:  # only reachable when the offered tool set was overridden
             return ActionResult(
                 ok=False, observation=f"tool {call.name!r} has no toolbox", error="no_toolbox"
             )
+        rebindable = False
+        if isinstance(toolbox, TurnScopedTools):
+            # D6 (§3.12): act() must flow through THIS run's per-turn executor —
+            # the one TaskManager wrapped with the kill check and the foreground
+            # lease — never the raw constructor-time seam, which would let a
+            # background turn touch the screen without consent. Perception reads
+            # never execute actions, so rebinding is simply harmless for them.
+            toolbox = toolbox.with_executor(execute)
+            rebindable = True
         try:
             if call.name == "get_elements":
                 query = call.arguments.get("query")
@@ -508,6 +517,13 @@ class LLMPlanner:
                     ),
                     error="invalid_act",
                 )
+            if not rebindable:
+                # Fail closed (§3.12 D6): a toolbox that cannot rebind must
+                # never act through its constructor-time executor — route the
+                # request straight through the per-turn executor (kill check +
+                # foreground lease in front of the gate). Only ScreenToolbox
+                # has act() bookkeeping, so nothing else is lost.
+                return execute(request)
             return toolbox.act(request)
         except Exception as exc:
             logger.exception("toolbox tool %s crashed", call.name)

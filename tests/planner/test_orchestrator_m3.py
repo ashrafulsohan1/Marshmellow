@@ -124,6 +124,15 @@ class FakeToolbox:
             raise AssertionError("FakeToolbox act results exhausted")
         return self.results.pop(0)
 
+    def with_executor(
+        self, execute: Callable[[ActionRequest], ActionResult]
+    ) -> FakeToolbox:
+        """Model the real ScreenToolbox contract (TurnScopedTools): the
+        orchestrator rebinds every run so acts flow through the per-turn
+        executor. The fake's act() IS its executor seam (scripted results),
+        so the executor itself is unused."""
+        return self
+
 
 class FakeScreenPerception:
     """ScreenPerception double: scripted snapshots, registered into the real
@@ -486,9 +495,11 @@ def test_declared_l0_on_password_element_still_requires_confirmation() -> None:
             ),
         ]
     )
-    execute, _ = _executor()
-
-    result = LLMPlanner(llm, toolbox=toolbox).run(_instruction("type my password"), execute)
+    # Production model (M4 D6): the orchestrator rebinds every run so the act
+    # flows through the PER-TURN executor — which wraps the composed seam the
+    # toolbox was built with (TaskManager._executing wraps app._execute). Here
+    # the per-turn executor IS the gate-wrapped seam.
+    result = LLMPlanner(llm, toolbox=toolbox).run(_instruction("type my password"), seam)
 
     # the gate re-classified: declared L0 on a password field still demanded
     # spoken confirmation (§3.13: the declared risk is advisory only)
