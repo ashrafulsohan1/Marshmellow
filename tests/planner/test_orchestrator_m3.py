@@ -916,11 +916,12 @@ async def test_app_headless_composition_with_injected_fakes(tmp_path: Path) -> N
 
         assert handle.result is not None and handle.result.ok
         assert handle.result.summary_to_speak == "Opened Notepad and typed hello."
-        assert pack.calls == ["notepad"]  # shell → the DE pack, not the gate
+        assert pack.calls == ["notepad"]  # shell → the DE pack, via the gate
         assert [(r.kind, r.payload.get("text")) for r in layer.requests] == [
             ("type_text", "hello")
         ]
-        assert gate.guarded and gate.guarded[0].kind == "type_text"  # acts pass the gate
+        # Release-audit S1: EVERY action passes the gate — shell launches included.
+        assert [r.kind for r in gate.guarded] == ["shell", "type_text"]
         spoken = [s.text for s in app.tts.spoken]
         assert any("typed hello" in t.lower() for t in spoken)  # FakeTTS spoke the result
     finally:

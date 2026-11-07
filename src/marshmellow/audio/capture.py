@@ -107,7 +107,12 @@ class VADSegmenter:
 
 
 class AudioEngine:
-    """Chunk source → VAD → SpeechSegments on the bus. Own thread, never blocks."""
+    """Chunk source → VAD → SpeechSegments on the bus. Own thread, never blocks.
+
+    `chunk_tap` (M5 Task 5, D8) receives every UNMUTED chunk before VAD — the
+    bridge to the wake word watcher. Tap exceptions are logged and never kill
+    the capture thread; muting stops wake detection too (§3.1).
+    """
 
     def __init__(
         self,
@@ -115,10 +120,12 @@ class AudioEngine:
         chunk_source: Iterator[np.ndarray] | None = None,
         vad: Callable[[np.ndarray], float] | None = None,
         sample_rate: int = SAMPLE_RATE,
+        chunk_tap: Callable[[np.ndarray], None] | None = None,
     ) -> None:
         self._bus = bus
         self._source = chunk_source or _mic_chunks(sample_rate, CHUNK_SAMPLES)
         self._segmenter = VADSegmenter(vad or silero_vad(), sample_rate)
+        self._chunk_tap = chunk_tap
         self._muted = False
         self._alive = False
         self._thread = threading.Thread(target=self._loop, name="audio", daemon=True)
@@ -141,5 +148,10 @@ class AudioEngine:
                 if not self._alive:
                     return
                 continue
+            if self._chunk_tap is not None:
+                try:
+                    self._chunk_tap(chunk)
+                except Exception:
+                    logger.exception("chunk tap raised; capture continues")
             for segment in self._segmenter.feed(chunk):
                 self._bus.emit_threadsafe(segment)

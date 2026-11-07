@@ -34,6 +34,27 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
 ]
+# M5 Task 5 (D8): openwakeword's upstream custom-training flow (openwakeword.train)
+# needs torch; the trainer tool imports it inside the training step only. Not part
+# of the default env — `uv sync --group wake-training` before training.
+# License note (04-tooling, Task 7 records): torch BSD-3, torchmetrics Apache-2.0,
+# torchinfo MIT, pronouncing MIT, audiomentations/torch_audiomentations MIT,
+# speechbrain Apache-2.0, acoustics BSD-3, mutagen GPL-2.0-or-later, onnx/onnxscript
+# MIT (training-time only; the product never imports any of these — same boundary
+# as piper).
+wake-training = [
+    "torch>=2.2",
+    "torchmetrics>=1.0",
+    "torchinfo>=1.1",
+    "pronouncing>=0.2",
+    "audiomentations>=0.34",
+    "torch-audiomentations>=0.11",
+    "speechbrain>=1.0",
+    "mutagen>=1.46",
+    "acoustics>=0.2",
+    "onnx>=1.15",
+    "onnxscript>=0.1",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -56,6 +77,9 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# "." on the path so tests can import the pure half of tools/ (M5 Task 5:
+# manifest determinism + calibration math are headless-tested).
+pythonpath = ["."]
 addopts = "-m 'not manual'"
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"

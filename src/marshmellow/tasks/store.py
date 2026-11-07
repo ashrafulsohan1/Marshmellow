@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+import uuid
 from pathlib import Path
 
 from pydantic import BaseModel, TypeAdapter
@@ -54,11 +56,26 @@ class TaskStore:
             return []
 
     def save(self, tasks: list[StoredTask]) -> None:
+        """Atomic write: serialize first, then temp-file + ``os.replace``.
+
+        A concurrent reader (or AV/indexer) holding the destination open for a
+        moment must not turn a persist into a lost snapshot on Windows —
+        unique temp name plus a brief replace-retry; on final refusal the tmp
+        is cleaned up and the caller's best-effort logging takes over (the
+        next persist retries anyway)."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            json.dumps([row.model_dump(mode="json") for row in tasks], indent=2),
-            encoding="utf-8",
-        )
+        payload = json.dumps([row.model_dump(mode="json") for row in tasks], indent=2)
+        tmp = self._path.with_name(self._path.name + "." + uuid.uuid4().hex + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        for attempt in range(5):
+            try:
+                os.replace(tmp, self._path)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    tmp.unlink(missing_ok=True)
+                    raise
+                time.sleep(0.02 * (attempt + 1))
 
 
 def default_task_store_path() -> Path:

@@ -1,10 +1,12 @@
 """Capture/VAD tests on injected probabilities and synthetic chunks — no mic, no model."""
 
+import logging
 import threading
 import wave
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from marshmellow.audio.capture import AudioEngine, VADSegmenter
 from marshmellow.audio.fixtures import FixtureMic
@@ -82,6 +84,55 @@ def test_muted_engine_drops_everything() -> None:
     engine.start()
     engine.stop()  # finite source: thread drains and exits
     assert got == []
+
+
+def test_engine_tap_receives_unmuted_chunks_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """M5 Task 5 (D8): the chunk tap feeds the wake word bridge — once per
+    UNMUTED chunk, before VAD (mute stops wake too, §3.1); a raising tap is
+    logged and never kills the capture thread."""
+    bus = EventBus()
+    source = [_chunk() for _ in range(3)]
+    tapped: list[np.ndarray] = []
+    probs = iter([0.0] * 3)  # no speech → no segments; the tap still sees chunks
+    engine = AudioEngine(
+        bus=bus, chunk_source=iter(source), vad=lambda c: next(probs),
+        chunk_tap=tapped.append,
+    )
+    engine.start()
+    engine.stop()  # finite source: thread drains and exits
+    assert len(tapped) == len(source)
+    assert all(t is s for t, s in zip(tapped, source, strict=False))  # same chunks, in order
+
+    tapped.clear()
+    engine = AudioEngine(
+        bus=bus, chunk_source=iter([_chunk() for _ in range(3)]),
+        vad=lambda c: 0.0, chunk_tap=tapped.append,
+    )
+    engine.set_muted(True)  # mute stops wake too: the tap sees nothing
+    engine.start()
+    engine.stop()
+    assert tapped == []
+
+    def boom(_chunk: np.ndarray) -> None:
+        raise RuntimeError("tap boom")
+
+    got: list[SpeechSegment] = []
+    done = threading.Event()
+    bus.subscribe(SpeechSegment, lambda s: (got.append(s), done.set()))
+    probs2 = iter([0.9] * 16 + [0.0] * 30)
+    with caplog.at_level(logging.ERROR, logger="marshmellow.audio.capture"):
+        engine = AudioEngine(
+            bus=bus, chunk_source=iter([_chunk() for _ in range(16 + 30)]),
+            vad=lambda c: next(probs2), chunk_tap=boom,
+        )
+        engine.start()
+        assert done.wait(timeout=5.0), "capture thread died with the tap"
+        engine.stop()
+    assert len(got) == 1  # the segment still reached the bus
+    tap_logs = [r for r in caplog.records if "tap" in r.message.lower()]
+    assert tap_logs and tap_logs[0].exc_info is not None
 
 
 def test_fixture_mic_replays_wav_chunks(tmp_path: Path) -> None:

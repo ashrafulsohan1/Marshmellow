@@ -3,6 +3,7 @@ loop on scripted scores. Real-model tier is dev-gated and skips cleanly when abs
 
 import threading
 import time
+import wave
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from marshmellow.audio.activation import (
     VK_SHIFT,
     HotkeyWatcher,
     WakeWordWatcher,
+    wake_threshold_from_calibration,
 )
 from marshmellow.core.bus import EventBus
 from marshmellow.core.contracts import (
@@ -314,3 +316,94 @@ def test_openwakeword_detects_phrase_on_fixture(monkeypatch: pytest.MonkeyPatch)
     detections = seen.of(WakeDetected)
     assert detections, "phrase clip never crossed the wake threshold"
     assert all(e.score >= 0.5 for e in detections)  # type: ignore[attr-defined]
+
+
+# --------------------------------------------- self-trained model tier (D8, M5 T5)
+
+WAKE_ASSETS = REPO / "assets" / "wake"
+WAKE_MODEL_READY = (WAKE_ASSETS / "hey-marshmellow.onnx").exists()
+
+
+def _pink_noise(n_samples: int, seed: int, amplitude: float = 0.3) -> np.ndarray:
+    """SP3's noise stream: speech-band-shaped pink noise at a fixed amplitude."""
+    rng = np.random.default_rng(seed)
+    white = rng.standard_normal(n_samples)
+    spectrum = np.fft.rfft(white)
+    freqs = np.fft.rfftfreq(n_samples, d=1.0 / 16000)
+    shaped = spectrum / np.sqrt(np.maximum(freqs, 20.0))  # pink tilt from 20 Hz up
+    pink = np.fft.irfft(shaped, n=n_samples)
+    peak = np.max(np.abs(pink)) or 1.0
+    return (pink / peak * amplitude * 32767).astype(np.int16)
+
+
+@pytest.mark.skipif(
+    not WAKE_MODEL_READY,
+    reason="self-trained hey-marshmellow model not trained yet (Task 5 Step 5 machine job)",
+)
+def test_self_trained_model_detects_piper_phrase(tmp_path: Path) -> None:
+    """D8 acceptance: the shipped self-trained model fires WakeDetected on a
+    held-out piper-synthesized phrase fixture at the calibrated threshold, and
+    the fixture stays inside the 1.5 s onset budget (a wake must land within
+    ~1.5 s of the phrase starting, per the SP3 ≤ 500 ms ack budget plus frame
+    context — the WAV length is the audio-time part of that)."""
+    pytest.importorskip("openwakeword")
+    from marshmellow.audio.fixtures import FixtureMic
+
+    fixture = WAKE_ASSETS / "fixture-hey-marshmellow.wav"
+    assert fixture.exists(), "trainer must export the held-out phrase fixture"
+    threshold = wake_threshold_from_calibration(WAKE_ASSETS)
+
+    bus = EventBus()
+    seen = Collector(bus, WakeDetected)
+    watcher = WakeWordWatcher(
+        bus, model_dir=WAKE_ASSETS,
+        chunk_source=FixtureMic([fixture]).chunks(), threshold=threshold,
+    )
+    watcher.start()
+    _wait(lambda: bool(seen.of(WakeDetected)), timeout=30.0)  # model load ~seconds
+    watcher.stop()
+    assert seen.of(ActivationDegraded) == [], "shipped model tier degraded unexpectedly"
+    detections = seen.of(WakeDetected)
+    assert detections, "piper-synthesized phrase never crossed the wake threshold"
+    assert all(e.score >= threshold for e in detections)  # type: ignore[attr-defined]
+    with wave.open(str(fixture), "rb") as w:
+        duration = w.getnframes() / w.getframerate()
+    assert duration <= 1.6, "phrase fixture exceeds the 1.5 s onset budget"
+
+
+@pytest.mark.skipif(
+    not WAKE_MODEL_READY,
+    reason="self-trained hey-marshmellow model not trained yet (Task 5 Step 5 machine job)",
+)
+def test_self_trained_model_quiet_on_sp3_noise_streams(tmp_path: Path) -> None:
+    """D8 acceptance, negative half: SP3's silence + pink-noise streams fire
+    ZERO WakeDetected at the calibrated threshold (the SP3 noise-floor result
+    must hold for the self-trained model too)."""
+    pytest.importorskip("openwakeword")
+    from marshmellow.audio.fixtures import FixtureMic
+
+    sr = 16000
+    streams = [
+        tmp_path / "sp3_silence.wav",
+        tmp_path / "sp3_pink_noise.wav",
+    ]
+    with wave.open(str(streams[0]), "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(sr)
+        w.writeframes(np.zeros(6 * sr, dtype=np.int16).tobytes())
+    with wave.open(str(streams[1]), "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(sr)
+        w.writeframes(_pink_noise(6 * sr, seed=3).tobytes())
+    threshold = wake_threshold_from_calibration(WAKE_ASSETS)
+
+    bus = EventBus()
+    seen = Collector(bus, WakeDetected)
+    watcher = WakeWordWatcher(
+        bus, model_dir=WAKE_ASSETS,
+        chunk_source=FixtureMic(streams).chunks(), threshold=threshold,
+    )
+    watcher.start()
+    watcher.stop()  # finite source: drains fast, stop() joins
+    _wait(lambda: not any(t.name == "wake-word" and t.is_alive()
+                          for t in threading.enumerate()))
+    assert seen.of(ActivationDegraded) == [], "shipped model tier degraded unexpectedly"
+    assert seen.of(WakeDetected) == [], "noise stream produced a false accept"

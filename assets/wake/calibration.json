@@ -1,0 +1,35 @@
+{
+  "model": "hey-marshmellow.onnx",
+  "method": "smallest cutoff with false-accept rate <= target over all negative frame scores (tools/train_wake_model.py calibrate_threshold); per-class maxima recorded to make lookalike confusions visible",
+  "target_far": 0.00020403999183840033,
+  "sp3_default": 0.5,
+  "sp3_default_kept": false,
+  "negative_frames": 4900,
+  "negative_scores": {
+    "max": 0.9995,
+    "p99": 0.9989,
+    "p95": 0.0003
+  },
+  "negative_scores_by_class": {
+    "lookalikes": {
+      "clips": 36,
+      "max": 0.9995,
+      "p99": 0.9993
+    },
+    "generic": {
+      "clips": 60,
+      "max": 0.9995,
+      "p99": 0.1124
+    },
+    "background": {
+      "clips": 100,
+      "max": 0.0001,
+      "p99": 0.0001
+    }
+  },
+  "positive_clips": 100,
+  "positive_min_clip_max_score": 0.9885,
+  "positive_max_clip_max_score": 0.9996,
+  "recall_margin": -0.0015,
+  "threshold": 0.99
+}

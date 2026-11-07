@@ -37,15 +37,18 @@ from pydantic import ValidationError
 
 from marshmellow import __version__
 from marshmellow.audio.activation import (
+    ChunkQueue,
     HookBackend,
     HotkeyWatcher,
     WakeWordWatcher,
     WinLLHookBackend,
+    wake_threshold_from_calibration,
 )
 from marshmellow.audio.ask import AskUserChannel
 from marshmellow.audio.capture import AudioEngine
 from marshmellow.audio.loop import Transcriber, VoiceLoop
 from marshmellow.core import secrets
+from marshmellow.core.assets import default_wake_model_dir, default_wake_model_path
 from marshmellow.core.bus import EventBus
 from marshmellow.core.config import LLMProviderConfig, Settings
 from marshmellow.core.contracts import (
@@ -233,6 +236,9 @@ class App:
         )
         self.gate = gate if gate is not None else self._build_gate()
         self._gated_execute = self.gate.guard(self._run_action_layer)
+        # Release-audit S1 (§3.13): the LLM-driven shell/launch path goes
+        # through the same gate as every other action — no executor bypass.
+        self._gated_shell = self.gate.guard(self._run_shell)
         self.toolbox = ScreenToolbox(self.perception, self.registry, self._execute)
         self.planner = planner if planner is not None else self._build_planner(settings)
         self.lease = self._build_lease()  # D6: consented screen access (§3.12)
@@ -248,12 +254,14 @@ class App:
             lease=self.lease,
             store=self.task_store,
         )
-        self.audio_engine: AudioEngine | None = audio_engine
-        if self.audio_engine is None and not headless:
-            self.audio_engine = AudioEngine(bus=self.bus)  # real mic; headless stays silent
         self._hotkey_backend = hotkey_backend
         self._wake_model_dir = wake_model_dir
-        self._build_activation(settings)
+        self._build_activation(settings)  # creates self.wake_tap when the wake channel is on
+        self.audio_engine: AudioEngine | None = audio_engine
+        if self.audio_engine is None and not headless:
+            # real mic; headless stays silent. The D8 tap (when the wake channel
+            # is on) bridges every unmuted chunk to the wake watcher's queue.
+            self.audio_engine = AudioEngine(bus=self.bus, chunk_tap=self.wake_tap)
         self._quit_requested = False
         self.voice = VoiceLoop(self)
         self.bus.subscribe(ActivationDegraded, self._on_activation_degraded)
@@ -282,6 +290,8 @@ class App:
             self.audio_engine.stop()
         if self.hotkey_watcher is not None:
             self.hotkey_watcher.stop()
+        if self.wake_tap is not None:
+            self.wake_tap.close()  # ends the watcher's chunk_source for a clean join
         if self.wake_watcher is not None:
             self.wake_watcher.stop()
         self.tts.quit()  # full teardown (piper: terminate subprocess); stop() is only barge-in
@@ -613,11 +623,18 @@ class App:
                 ok=True, observation=answer if answer.strip() else "no answer (silence or timeout)"
             )
         if req.kind == "shell" and isinstance(req.payload.get("open_app"), str):
-            result: ShellResult = self.pack.open_app(req.payload["open_app"])
-            return ActionResult(ok=result.ok, observation=result.detail)
+            # Release-audit S1: gated — the L1 announce/log/confirm policy
+            # applies to DE-pack launches exactly as to on-screen actions;
+            # the pack sees only requests the gate allowed.
+            return self._gated_shell(req)
         if req.kind == "create_task":
             return self._create_task(req)
         return self._gated_execute(req)
+
+    def _run_shell(self, req: ActionRequest) -> ActionResult:
+        """The gated shell executor: DE-pack launches (app names and URIs)."""
+        result: ShellResult = self.pack.open_app(str(req.payload.get("open_app", "")))
+        return ActionResult(ok=result.ok, observation=result.detail)
 
     def _create_task(self, req: ActionRequest) -> ActionResult:
         """M4 (§3.12): the LLM registers a background task through this seam.
@@ -696,10 +713,21 @@ class App:
         )
 
     def _build_activation(self, settings: Settings) -> None:
-        """D2: the activation setting decides which channels get wired."""
+        """D2: the activation setting decides which channels get wired.
+
+        M5 Task 5 (D8): the wake channel shares ONE `ChunkQueue` between the
+        capture tap and the watcher — the engine feeds it per unmuted chunk,
+        the watcher drains it, and a stalled scorer never stalls capture. The
+        model dir is the injected `wake_model_dir`, else the packaged default
+        when it holds a trained model (GUI mode only: headless runs — tests and
+        the simulator — never load real models or open the mic; they inject
+        explicitly). Without a model, model_dir=None keeps the existing spoken
+        degrade and the hotkey stays the trusted channel.
+        """
         mode = settings.activation
         self.hotkey_watcher: HotkeyWatcher | None = None
         self.wake_watcher: WakeWordWatcher | None = None
+        self.wake_tap: ChunkQueue | None = None
         if mode in ("hotkey", "both"):
             backend = self._hotkey_backend
             if backend is None:
@@ -710,11 +738,20 @@ class App:
                 self.bus, combo=settings.hotkey, mode="hold", backend=backend
             )
         if mode in ("wake_word", "both"):
-            # No self-trained wake model yet (D8): model_dir=None degrades to a
-            # spoken hint and the hotkey stays the trusted channel. The chunk
-            # source arrives with the model (mic sharing is wired there).
+            model_dir = self._wake_model_dir
+            if (
+                model_dir is None
+                and not self.headless
+                and default_wake_model_path() is not None
+            ):
+                model_dir = default_wake_model_dir()
+            # D8 mic sharing: one queue is the engine's tap AND the watcher's source.
+            self.wake_tap = ChunkQueue()
             self.wake_watcher = WakeWordWatcher(
-                self.bus, model_dir=self._wake_model_dir, chunk_source=iter(())
+                self.bus,
+                model_dir=model_dir,
+                chunk_source=iter(self.wake_tap),
+                threshold=wake_threshold_from_calibration(model_dir),
             )
 
     def _on_activation_degraded(self, event: ActivationDegraded) -> None:
@@ -750,4 +787,17 @@ class App:
             # the GUI thread — hop over (non-blocking; §3.11, M4 T6).
             if self._open_ui_marshal is not None:  # subscribed only in GUI mode
                 self._open_ui_marshal.request()
+        elif action.kind in ("mute", "unmute"):
+            # Release-audit S2: the tray is the recovery channel while the mic
+            # is muted (voice intents cannot be heard) — it must actually work.
+            muted = action.kind == "mute"
+            if self.audio_engine is not None:
+                self.audio_engine.set_muted(muted)
+            if self.mascot is not None:
+                self.mascot.set_state("muted" if muted else "idle")
+            logger.info("microphone muted: %s (tray)", muted)
+        elif action.kind == "pause":
+            # Tray kill-switch equivalent: cancel every running task now.
+            self.manager.cancel_all()
+            self.tts.say(SpeakRequest(text="All tasks cancelled.", priority="result"))
         logger.info("tray action: %s", action.kind)

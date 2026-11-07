@@ -9,7 +9,9 @@ a spoken `ActivationDegraded` instead of crashing (M2 plan Review Focus 4, D2/D8
 
 from __future__ import annotations
 
+import json
 import logging
+import queue
 import sys
 import threading
 import time
@@ -299,6 +301,79 @@ else:  # non-Windows: the product is win32-first; stub keeps imports safe off-Wi
 
 WAKE_FRAME_SAMPLES = 1280  # 80 ms @ 16 kHz — openWakeWord's native streaming frame
 WAKE_THRESHOLD = 0.5  # M0-SP3
+
+_CALIBRATION_FILE = "calibration.json"
+
+
+class ChunkQueue:
+    """Capture thread → wake thread bridge (M5 Task 5, D8 mic sharing).
+
+    The `AudioEngine` tap feeds `__call__` on the capture thread; the wake
+    watcher consumes `__iter__` on its own thread. Drop-oldest: a stalled
+    scorer never stalls capture (50 × 32 ms chunks ≈ 1.6 s of buffer, after
+    which the oldest unheard audio goes). `close()` ends the iterator so a
+    stopped watcher's thread exits cleanly even with no audio flowing.
+    """
+
+    _CLOSED = object()  # sentinel past the queue's type — consumers are untyped
+
+    def __init__(self, maxlen: int = 50) -> None:
+        self._q: queue.Queue[np.ndarray] = queue.Queue(maxsize=maxlen)
+        self._dropped = 0
+
+    def __call__(self, chunk: np.ndarray) -> None:
+        """The tap: put_nowait; on full, drop the oldest chunk and count it."""
+        try:
+            self._q.put_nowait(chunk)
+        except queue.Full:
+            try:
+                self._q.get_nowait()  # drop-oldest
+            except queue.Empty:  # pragma: no cover - single-producer race guard
+                pass
+            self._dropped += 1
+            self._q.put_nowait(chunk)
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """The watcher's chunk_source: get(timeout=0.5) loop until close()."""
+        return self._drain()
+
+    def _drain(self) -> Iterator[np.ndarray]:
+        while True:
+            try:
+                item = self._q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if item is ChunkQueue._CLOSED:
+                return
+            yield item
+
+    def close(self) -> None:
+        """Sentinel → the iterator ends (clean watcher stop)."""
+        try:
+            self._q.put_nowait(ChunkQueue._CLOSED)
+        except queue.Full:
+            self._q.get_nowait()  # a queued chunk is dead once the app stops
+            self._q.put_nowait(ChunkQueue._CLOSED)
+
+    @property
+    def dropped(self) -> int:
+        return self._dropped
+
+
+def wake_threshold_from_calibration(model_dir: Path | None) -> float:
+    """The trainer's calibrated threshold (assets/wake/calibration.json), or
+    SP3's 0.5 default when the file is absent/malformed/out of range (M0-SP3
+    stands unless the training histogram says otherwise — recorded, not silent)."""
+    if model_dir is None:
+        return WAKE_THRESHOLD
+    path = model_dir / _CALIBRATION_FILE
+    if not path.exists():
+        return WAKE_THRESHOLD
+    try:
+        threshold = float(json.loads(path.read_text(encoding="utf-8"))["threshold"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return WAKE_THRESHOLD
+    return threshold if 0.0 < threshold < 1.0 else WAKE_THRESHOLD
 
 
 class WakeScorer(Protocol):

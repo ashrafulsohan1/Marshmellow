@@ -152,5 +152,14 @@ this entry.
 - **Live-mic wake false-accept soak** (SP3 "Limitations", planned for M2): ≥ 1 h of
   ambient audio through the real watcher once the self-trained "hey marshmellow"
   model exists — before the wake word is trusted hands-free.
+  → **Discharged by M5 Task 5** (`tools/soak_wake_m5.py --hours 1`: the REAL path —
+  AudioEngine chunk_tap → ChunkQueue → WakeWordWatcher, self-trained model at the
+  calibrated threshold — over ambient mic; verdict in
+  [spikes/data/m5_wake_soak.json](spikes/data/m5_wake_soak.json) and the M5 evidence
+  block). **Re-check in the M5 Task 7 checklist**: the other half of "trusted
+  hands-free" is user-physical — saying "hey marshmellow" aloud must wake the app
+  (the piper fixture proves the model fires; a human voice at threshold 0.99 is
+  unverified until someone speaks), and a spoken lookalike ("hey marshmallow")
+  must NOT wake it (see assets/wake/README.md's recorded lookalike limitation).
 - **Mascot on-screen placement/feel** (M1 deferred offscreen verification): tray icon
   currently renders with the system default ("No Icon set" warning) — art is OQ-3.
