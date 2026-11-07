@@ -324,6 +324,21 @@ WAKE_ASSETS = REPO / "assets" / "wake"
 WAKE_MODEL_READY = (WAKE_ASSETS / "hey-marshmellow.onnx").exists()
 
 
+def test_feature_extractors_are_committed() -> None:
+    """Release fix (cleanroom-verify final, 2026-11-07): the openwakeword 0.6.0
+    wheel ships no resources/ and nothing in uv sync fetches its two ONNX feature
+    extractors — while they stayed gitignored, every clean checkout failed to
+    load the wake scorer and the D8 acceptance test timed out. They are committed
+    beside the wake model now; this keeps a missing extractor a loud one-line
+    failure instead of a 30 s wake timeout."""
+    for name in ("melspectrogram.onnx", "embedding_model.onnx"):
+        assert (WAKE_ASSETS / name).exists(), (
+            f"{name} missing from {WAKE_ASSETS} — the wheel ships no resources/ "
+            "and the scorer cannot load without it (restore the .gitignore "
+            "negation and the committed file)"
+        )
+
+
 def _pink_noise(n_samples: int, seed: int, amplitude: float = 0.3) -> np.ndarray:
     """SP3's noise stream: speech-band-shaped pink noise at a fixed amplitude."""
     rng = np.random.default_rng(seed)

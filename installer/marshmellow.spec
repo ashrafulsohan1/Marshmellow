@@ -66,9 +66,10 @@ a_main = Analysis(
     # but not these files — the same class of gap as piper's espeak-ng-data):
     # - faster_whisper/assets: the silero-VAD onnx the AudioEngine's VAD loads
     #   on boot (frozen build crashed in silero_vad() without it).
-    # - openwakeword/resources/models: melspectrogram/embedding feature models
-    #   resolved relative to the package __file__ by the wake watcher (the
-    #   copies in _internal/wake are OURS, not what openwakeword looks for).
+    # - openwakeword/resources: belt-and-braces only — the committed feature
+    #   extractors ride in _internal/wake (assets/wake ships whole) and the wake
+    #   watcher passes them by explicit path, so on the bare wheel (no
+    #   resources/) this collects nothing.
     + collect_data_files("faster_whisper")
     + collect_data_files("openwakeword", subdir="resources"),
     excludes=["marshmellow.tts.piper_worker", "tkinter"],  # SP7: no piper import in the GUI graph

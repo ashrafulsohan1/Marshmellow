@@ -13,8 +13,15 @@ the app (`audio/activation.wake_threshold_from_calibration`).
 | `calibration.json` | yes | threshold calibration from the negative-score histogram |
 | `manifest.json` | yes | the synthesis manifest (utterances per voice, negative list, seed) |
 | `fixture-hey-marshmellow.wav` | yes | held-out piper-synthesized phrase for the D8 acceptance test (`tests/audio/test_activation.py`) |
-| `melspectrogram.onnx` | no (re-downloadable) | openWakeWord feature extractor — license check below |
-| `embedding_model.onnx` | no (re-downloadable) | openWakeWord feature extractor — license check below |
+| `melspectrogram.onnx` | **yes** (`.gitignore` negation) | openWakeWord feature extractor — license check below |
+| `embedding_model.onnx` | **yes** (`.gitignore` negation) | openWakeWord feature extractor — license check below |
+
+The two feature extractors are TRACKED (release fix 2026-11-07): the openwakeword
+0.6.0 wheel ships no `resources/` directory and nothing in `uv sync` fetches these
+files, so while they stayed ignored every clean checkout failed to load the wake
+scorer (the final cleanroom-verify FAIL at `4797dca`). The scorer loads them from
+the wake model dir by explicit path (`audio/activation.openwakeword_scorer`),
+which also makes the bundled `_internal/wake` self-contained.
 
 Bundled **pretrained** openWakeWord models (`alexa`, `hey_jarvis`, …) NEVER ship:
 they are CC BY-NC-SA 4.0 (non-commercial) and dev/test-only

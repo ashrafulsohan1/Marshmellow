@@ -30,8 +30,14 @@ Thumbs.db
 # M5 Task 5 (D8): the self-trained "hey marshmellow" model IS the product asset
 # (openwakeword Apache-2.0 code + Apache-2.0 feature extractors; see
 # assets/wake/README.md for the recorded license check). Its two feature-extractor
-# deps stay ignored (re-downloadable at build time, installer/fetch_bundle_inputs).
+# deps are tracked too (release fix 2026-11-07: the openwakeword 0.6.0 wheel ships
+# NO resources/ and nothing in uv sync fetches them, so while they were ignored
+# every clean checkout failed to load the wake scorer — the final cleanroom-verify
+# FAIL; the old "re-downloadable at build time" note described a fetcher that
+# installer/fetch_bundle_inputs.py never had).
 !assets/wake/hey-marshmellow.onnx
+!assets/wake/melspectrogram.onnx
+!assets/wake/embedding_model.onnx
 docs/plan/spikes/data/sp4_voice/
 docs/plan/spikes/data/sp2_fixtures/
 docs/plan/spikes/data/sp3_dev/
