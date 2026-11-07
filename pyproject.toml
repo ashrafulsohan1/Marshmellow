@@ -33,6 +33,12 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
     "mypy>=1.13",
+    # M5 Task 7 (OQ-9): the installer build (`installer/marshmellow.spec`) and the
+    # startup/memory bench (`tools/bench_startup_m5.py`). License note (04-tooling,
+    # Task 7 records): pyinstaller GPL-2.0-or-later with a runtime exception
+    # (bundling our MIT app is the tool's intended use), psutil BSD-3-Clause.
+    "pyinstaller>=6.10",
+    "psutil>=5.9",
 ]
 # M5 Task 5 (D8): openwakeword's upstream custom-training flow (openwakeword.train)
 # needs torch; the trainer tool imports it inside the training step only. Not part

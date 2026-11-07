@@ -2,6 +2,7 @@
 
 import io
 import struct
+import sys
 import time
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from marshmellow.core.contracts import (
     SpeakRequest,
 )
 from marshmellow.tts import piper as piper_mod
-from marshmellow.tts.piper import PiperSpeaker, default_voice_model
+from marshmellow.tts.piper import PiperSpeaker, default_voice_model, worker_argv
 
 
 def make_stream(sample_rate: int, *utterances: bytes) -> bytes:
@@ -32,6 +33,9 @@ def test_default_voice_model_search_order(
 ) -> None:
     monkeypatch.delenv("MARSHMELLOW_VOICE_DIR", raising=False)
     monkeypatch.setattr(piper_mod, "REPO_ROOT", tmp_path)  # isolate from the real voices/
+    # The packaged-voice entry (M5 T7: _internal/voices in a frozen build) is
+    # patched out here — the dev checkout's real voices/ dir must not leak in.
+    monkeypatch.setattr(piper_mod, "default_voice_dir", lambda: None, raising=False)
     voice = tmp_path / "voices" / "en_US-lessac-medium.onnx"
     assert default_voice_model("en_US-lessac-medium") is None  # nothing anywhere
 
@@ -49,6 +53,62 @@ def test_default_voice_model_search_order(
     )  # env override wins
 
     assert default_voice_model("en_US-missing-medium") is None
+
+
+def test_default_voice_model_bundled_dir_searched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M5 T7: the packaged voice dir (asset_dir()/voices) is a search entry
+    between the env override and the dev checkout's voices/."""
+    monkeypatch.delenv("MARSHMELLOW_VOICE_DIR", raising=False)
+    monkeypatch.setattr(piper_mod, "REPO_ROOT", tmp_path)
+    bundled = tmp_path / "bundled"
+    bundled.mkdir()
+    voice = bundled / "en_US-lessac-medium.onnx"
+    voice.write_bytes(b"onnx")
+    monkeypatch.setattr(piper_mod, "default_voice_dir", lambda: bundled, raising=False)
+    assert default_voice_model("en_US-lessac-medium") == voice
+
+    env_dir = tmp_path / "envdir"
+    env_dir.mkdir()
+    (env_dir / "en_US-lessac-medium.onnx").write_bytes(b"onnx")
+    monkeypatch.setenv("MARSHMELLOW_VOICE_DIR", str(env_dir))
+    assert default_voice_model("en_US-lessac-medium") == env_dir / (
+        "en_US-lessac-medium.onnx"
+    )  # env override still wins over the bundle
+
+
+def test_worker_argv_dev_branch() -> None:
+    """M5 T7 (Review Focus 1): dev launches the worker as a module run of the
+    current interpreter; no model → no trailing path (the worker prints usage)."""
+    model = Path("voices/en_US-lessac-medium.onnx")
+    assert worker_argv(None, model) == [
+        sys.executable,
+        "-m",
+        "marshmellow.tts.piper_worker",
+        str(model),
+    ]
+    assert worker_argv(None, None) == [sys.executable, "-m", "marshmellow.tts.piper_worker"]
+    assert worker_argv(Path("py.exe"), None) == [
+        "py.exe",
+        "-m",
+        "marshmellow.tts.piper_worker",
+    ]
+
+
+def test_worker_argv_frozen_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M5 T7 (Review Focus 1): a frozen build cannot run `python -m` — the
+    worker is the spec's second exe sitting next to Marshmellow.exe (dist root),
+    and the model path (when known) is the only argument."""
+    exe = Path(r"C:\apps\Marshmellow\Marshmellow.exe")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    model = exe.parent / "_internal" / "voices" / "en_US-lessac-medium.onnx"
+    argv = worker_argv(None, model)
+    assert argv[0] == str(exe.with_name("piper_worker.exe"))
+    assert argv[1:] == [str(model)]
+
+    assert worker_argv(None, None) == [str(exe.with_name("piper_worker.exe"))]
 
 
 def _wait_for(predicate, timeout: float = 5.0) -> bool:

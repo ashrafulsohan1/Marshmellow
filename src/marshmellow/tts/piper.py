@@ -22,6 +22,7 @@ import wave
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
+from marshmellow.core.assets import default_voice_dir
 from marshmellow.core.bus import EventBus
 from marshmellow.core.contracts import (
     SpeakingStarted,
@@ -39,21 +40,52 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 def default_voice_model(voice: str) -> Path | None:
     """Locate the piper ONNX model for `voice` (e.g. ``en_US-lessac-medium``).
 
-    Search order: the ``MARSHMELLOW_VOICE_DIR`` env var, then ``voices/`` in the
-    repo checkout (what ``python -m piper.download_voices <voice>`` fills).
+    Search order: the ``MARSHMELLOW_VOICE_DIR`` env var, then the packaged
+    voice dir (``_internal/voices`` in a frozen build — M5 Task 7), then
+    ``voices/`` in the repo checkout (what ``python -m piper.download_voices
+    <voice>`` fills; the same directory the packaged entry resolves to in dev).
     Model binaries stay out of git (re-downloadable), so None means "no voice
     on this machine" — the composition root degrades instead of guessing.
     """
-    dirs = []
+    dirs: list[Path] = []
     env_dir = os.environ.get("MARSHMELLOW_VOICE_DIR")
     if env_dir:
         dirs.append(Path(env_dir))
+    bundled = default_voice_dir()
+    if bundled is not None:
+        dirs.append(bundled)
     dirs.append(REPO_ROOT / "voices")
-    for directory in dirs:
+    seen: set[str] = set()
+    for directory in dirs:  # dev: bundled == REPO_ROOT/voices — keep one entry
+        if str(directory) in seen:
+            continue
+        seen.add(str(directory))
         candidate = directory / f"{voice}.onnx"
         if candidate.exists():
             return candidate
     return None
+
+
+def worker_argv(python_exe: Path | None, model: Path | None) -> list[str]:
+    """The piper worker launch argv for both layouts (M5 Task 7, Review Focus 1).
+
+    Dev: ``[<python_exe | sys.executable>, -m, marshmellow.tts.piper_worker,
+    <model?>]`` — the GPL-isolated subprocess, unchanged since M2. Frozen
+    (PyInstaller): ``python -m`` is impossible (no interpreter ships in the
+    bundle), so the worker is the spec's SECOND exe sitting next to the main
+    ``Marshmellow.exe`` in the dist root — ``[<exe dir>/piper_worker.exe,
+    <model?>]``. The boundary survives freezing: the GUI process never imports
+    piper; the worker process imports it alone (SP7).
+    """
+    if getattr(sys, "frozen", False):
+        argv = [str(Path(sys.executable).with_name("piper_worker.exe"))]
+    elif python_exe is not None:
+        argv = [str(python_exe), "-m", "marshmellow.tts.piper_worker"]
+    else:
+        argv = [sys.executable, "-m", "marshmellow.tts.piper_worker"]
+    if model is not None:
+        argv.append(str(model))
+    return argv
 
 
 def make_wav(pcm: bytes, sample_rate: int = 22050) -> bytes:
@@ -259,10 +291,7 @@ class PiperSpeaker:
             self._bus.emit(SpeakingStopped())
 
     def _argv(self) -> list[str]:
-        argv = [sys.executable, "-m", "marshmellow.tts.piper_worker"]
-        if self._model is not None:
-            argv.append(str(self._model))
-        return argv
+        return worker_argv(None, self._model)
 
     def _default_spawn(self, argv: list[str]) -> subprocess.Popen:
         return subprocess.Popen(

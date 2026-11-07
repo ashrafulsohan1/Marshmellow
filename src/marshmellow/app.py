@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -359,12 +360,24 @@ class App:
         dialog.exec()
 
     def _build_stt(self) -> Transcriber:
-        """Real faster-whisper for live runs; the fake keeps headless runs silent-fast."""
+        """Real faster-whisper for live runs; the fake keeps headless runs silent-fast.
+
+        M5 Task 7 (OQ-9): a frozen build loads the PACKAGED ct2 model dir
+        (`_internal/models/faster-whisper-base`) — the hub name would try a
+        HuggingFace download at first start and the clean-account install must
+        be offline-capable except the BYOK call. Dev keeps the hub name.
+        """
         if self.headless:
             return FakeSTT()
+        from marshmellow.core.assets import default_stt_model_dir
         from marshmellow.stt.fasterwhisper import FasterWhisperSTT
 
-        return FasterWhisperSTT(model=self.settings.stt_model)
+        model: str = self.settings.stt_model
+        if getattr(sys, "frozen", False):
+            bundled = default_stt_model_dir()
+            if bundled is not None:
+                model = str(bundled)
+        return FasterWhisperSTT(model=model)
 
     def _build_tts(self) -> FakeTTS | PiperSpeaker:
         """Real piper subprocess for live runs; degrade to silent when no voice exists."""
@@ -761,6 +774,7 @@ class App:
         def on_task_event(event: TaskEvent) -> None:
             if event.type == "started":
                 self.tts.say(SpeakRequest(text="On it.", priority="ack"))
+                logger.info("spoken (ack, started): On it.")
                 if self.mascot is not None:
                     self.mascot.set_state("acting")
             elif event.type in ("result", "failed"):
@@ -774,6 +788,10 @@ class App:
                     "background" if mode in BACKGROUND_MODES else "result"
                 )
                 self.tts.say(SpeakRequest(text=event.payload, priority=priority))
+                # M5 T7 (dogfood report): the spoken payload reaches the session
+                # JSONL so the day-report counts spoken results and (background
+                # priority) monitor triggers by grep, not memory.
+                logger.info("spoken (%s, %s): %s", priority, event.type, event.payload)
                 if self.mascot is not None:
                     self.mascot.set_state("speaking" if event.type == "result" else "error")
 
