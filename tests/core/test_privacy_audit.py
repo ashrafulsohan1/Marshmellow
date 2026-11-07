@@ -232,7 +232,9 @@ async def test_session_log_is_clean(tmp_path: Path) -> None:
     )
     try:
         handle = await app.submit_text(
-            f"watch {MONITOR_URL} and tell me when it changes (password=hunter9 there)"
+            f"watch {MONITOR_URL} and open "
+            f'"https://status.example.com/?key={TOKEN_VALUE}" if it changes '
+            "(password=hunter9 there)"
         )
         await _until(lambda: handle.result is not None)
         await _until(lambda: bool(app.manager.list_tasks("waiting")))

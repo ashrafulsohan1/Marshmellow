@@ -115,3 +115,29 @@ def test_token_split_across_formatted_args_is_caught(tmp_path: Path) -> None:
     logger.info("GET %s timed out", "https://example.com/f?token=spl1t&x=1")
     msg = str(read_lines(tmp_path)[-1]["msg"])
     assert "spl1t" not in msg
+
+
+def test_credential_before_json_quote_keeps_the_row_parseable(tmp_path: Path) -> None:
+    """A credential immediately followed by a JSON-escaped quote (a quoted URL
+    in the logged text): the value must stop BEFORE the `\\"` escape pair.
+    Consuming its backslash would leave an unescaped quote inside the JSON
+    string and corrupt the row for every row-by-row consumer."""
+    logger = setup_logging(tmp_path)
+    logger.info('payload echo: {"target": "https://x/f?key=abc123"}')
+    raw = raw_log_text(tmp_path)
+    entries = [json.loads(line) for line in raw.splitlines()]  # every row parses
+    msg = str(entries[-1]["msg"])
+    assert "abc123" not in msg
+    assert "?key=[REDACTED]" in msg
+    assert msg.endswith('"}'), f"the JSON payload's escaped closing quote was eaten: {msg}"
+
+
+def test_quoted_url_ending_in_credential_round_trips(tmp_path: Path) -> None:
+    """The end-to-end shape (a double-quoted URL whose last query param IS the
+    credential): redacted, the trailing `\\"` intact, the row parseable."""
+    logger = setup_logging(tmp_path)
+    logger.info('open "https://status.example.com/?key=tok99" if it changes')
+    entries = [json.loads(line) for line in raw_log_text(tmp_path).splitlines()]
+    msg = str(entries[-1]["msg"])
+    assert "tok99" not in msg
+    assert '?key=[REDACTED]" if it changes' in msg

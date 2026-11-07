@@ -25,9 +25,13 @@ _SECRET_RE = re.compile(
 # Second pattern, applied after _SECRET_RE inside JsonFormatter.format: URL
 # query params carrying credentials (monitor targets with query keys — the M4
 # handoff; also exception text quoting such URLs). "?key=abc&x=1" →
-# "?key=[REDACTED]&x=1" — the rest of the URL stays diagnosable.
+# "?key=[REDACTED]&x=1" — the rest of the URL stays diagnosable. The value
+# class also excludes the BACKSLASH: the scrub runs on the JSON-encoded line,
+# so a value followed by a `\"` escape pair (a quoted URL in the logged text)
+# must stop BEFORE the pair — consuming its backslash would leave an
+# unescaped quote inside the JSON string and corrupt the row.
 _URL_SECRET_RE = re.compile(
-    r"[?&#](?:token|key|sig|signature|access_token|api_key|apikey)=([^&\"\s]+)", re.IGNORECASE,
+    r"[?&#](?:token|key|sig|signature|access_token|api_key|apikey)=([^&\"\\\s]+)", re.IGNORECASE,
 )
 
 _logger_name = "marshmellow"
