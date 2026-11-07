@@ -113,12 +113,17 @@ verification checklist remains open (`docs/plan/pending-user-verifications.md`).
   (`bd418c9`); URL-credential scrub must stop before a JSON `\"` escape pair
   (`dbbe33b`); faster_whisper/openwakeword package data collected into the bundle
   (`a6519eb`); terminal task rows drop before the state flip (cross-thread
-  observer race) (`d718b30`).
+  observer race) (`d718b30`); wake feature extractors committed beside the wake
+  model — a clean checkout could not load the wake scorer (openwakeword's wheel
+  ships no resources/; the interim cleanroom FAIL is recorded in
+  `docs/plan/CLEANROOM-VERIFY-final.md`) (`219d1c6`).
 - **Verified:** bundle builds and `Marshmellow.exe --smoke` exits 0; cold start
   2.06 s (≤ 10 s ✅) and idle RSS 297.5 MB (≤ 400 MB ✅) after recorded tuning;
   cleanroom verification PASS — 453 tests from a fresh clone (`7b45aac`);
   release-readiness audit triaged (`7919329`); release-verification gate recorded
-  (`c5a6d75`); M5 evidence + user guide, OQ-9 closed (`1f048da`).
+  (`c5a6d75`); M5 evidence + user guide, OQ-9 closed (`1f048da`); final cleanroom
+  re-verification PASS after the extractor fix — all three gates exit 0 from a
+  fresh clone (`219d1c6`).
 
 ### Security & privacy hardening (cross-milestone)
 
