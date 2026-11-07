@@ -77,5 +77,8 @@ higher one — recorded, not silently changed. Full numbers in
   are exactly what the soak measures; the "trusted hands-free" call stays with
   the Task 7 checklist (wake-works-for-the-real-user is a user-physical check).
 
-- false-accept check over live ambient mic: `docs/plan/spikes/data/m5_wake_soak.json`
-  (the Task 5 Step 5 soak; discharges the SP3 carry-over entry)
+- **live ambient soak (2026-11-07, 1.00 h, threshold 0.99): 7 false accepts/hour**
+  (`docs/plan/spikes/data/m5_wake_soak.json`, scores 0.991-0.999) — NOT ready to be
+  trusted hands-free; the hotkey stays the trusted activation (D2) and the
+  hands-free call is Task 7's checklist item. Discharges the SP3 carry-over
+  soak MEASUREMENT (pending-user-verifications.md).

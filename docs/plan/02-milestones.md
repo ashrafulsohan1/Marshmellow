@@ -182,6 +182,22 @@ see git log; Task 7 adds the soak harness + this evidence `docs:` commit).
 privacy audit (log scrubbing), docs.
 **DoD:** user dogfoods a full day hands-free with zero crashes; cold-start ≤ 10 s; memory ≤ 400 MB idle; installer verified on a clean Windows account.
 
+**Task 5 evidence (2026-11-07, dev desktop):** the D8 self-trained wake model exists and runs the REAL path —
+`AudioEngine chunk_tap → ChunkQueue → WakeWordWatcher` — headless-gated so tests inject models explicitly.
+`assets/wake/` ships `hey-marshmellow.onnx` (trained: 1000 piper-synthesized positives, 3 en_US voices,
+lookalike+generic negatives, SP3 pink-noise/silence background, openwakeword `auto_train` 50000 steps; the
+tool imports no piper — synthesis rides the existing `piper_worker` framing protocol) plus
+`calibration.json` (threshold **0.99** — SP3's 0.5 has OBSERVED lookalike false accepts, so the histogram
+said otherwise; positives 0.9885-0.9996, background max 0.0001, real-human-speech probe 0.0001; the
+single-phoneme lookalike limitation is recorded, not hidden) and the license check for the two
+feature-extractor ONNX deps (Apache-2.0 — SHIPPABLE per D8, in `assets/wake/README.md`). Gate: 473 passed,
+3 skipped, 17 deselected · ruff clean · mypy strict clean (43 files). **Ambient soak**
+(`tools/soak_wake_m5.py --hours 1` → [spikes/data/m5_wake_soak.json](spikes/data/m5_wake_soak.json)):
+**7 false accepts/hour at threshold 0.99** — the wake word is NOT trusted hands-free yet; the hotkey
+remains the trusted activation (D2) and the hands-free call goes to the Task 7 checklist (per
+[pending-user-verifications.md](pending-user-verifications.md)). The full M5 DoD evidence block lands with
+Task 7.
+
 ## Testing strategy (applies from M1 onward)
 
 **Principle: no human speech required to run the suite.** Every layer is fake-able at its contract; real audio is exercised by a small fixture suite, and by the user.

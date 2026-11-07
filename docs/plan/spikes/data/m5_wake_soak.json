@@ -1,0 +1,21 @@
+{
+  "tool": "tools/soak_wake_m5.py",
+  "started": "2026-11-07T01:21:13.208156+00:00",
+  "ended": "2026-11-07T02:21:13.533548+00:00",
+  "hours": 1.0,
+  "model_dir": "C:\\Users\\DELL\\OneDrive\\Documents\\Projects\\Marshmellow\\assets\\wake",
+  "threshold": 0.99,
+  "false_accepts": 7,
+  "false_accepts_per_hour": 7.0,
+  "scores": [
+    0.992,
+    0.999,
+    0.998,
+    0.994,
+    0.991,
+    0.999,
+    0.994
+  ],
+  "path": "AudioEngine chunk_tap -> ChunkQueue -> WakeWordWatcher (the real path)",
+  "verdict": "MEASURED: 7 false accepts in 1.00 h (7.0/h) at threshold 0.99 \u2014 the self-trained model is NOT ready to be trusted hands-free; the hotkey stays the trusted activation channel (D2). Scores 0.991-0.999 on ambient audio are consistent with the recorded lookalike/generic separation limitation (assets/wake/README.md). SP3 carry-over soak MEASUREMENT discharged; the hands-free trust call is Task 7's checklist item (wake-works-for-the-real-user + acceptability of the rate)."
+}
