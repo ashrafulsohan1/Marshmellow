@@ -178,6 +178,48 @@ Credential Manager, the HKCU Run key.
 into the M5 evidence block in [02-milestones.md](02-milestones.md); then delete
 this entry.
 
+## M6 Task 6 — release-feedback feel checklist (user-physical)
+
+**Deferred from:** M6 Tasks 1–5 — the art, the placement and the turn-taking are
+implemented and gated offscreen (painter determinism + all-8-states rows, position
+round-trip + unplugged-monitor clamp, window state-machine tests, the measured
+0-ingestion echo-guard fixture, the quit census), but "does it FEEL right" needs a
+human watching/listening at the machine. Run with the rebuilt bundle (M6 Task 7)
+or `uv run python -m marshmellow`.
+
+**Run** (outcomes recorded verbatim below each step):
+
+1. **Mascot art approval + on-screen feel (OQ-3):** the white-marshmallow mascot
+   appears bottom-right; walk it through states by talking to it (idle → listening
+   → thinking → acting → speaking → idle) — the parametric art reads clearly, the
+   state aura colors are distinguishable, nothing flickers or looks broken at rest.
+   Outcome: ____________
+2. **Drag + restart-persistence feel:** drag the mascot — it follows the cursor,
+   never leaves the screen, and grabbing it does not click through to the window
+   below; on release the position persists. Quit + relaunch → the mascot is where
+   you left it (drag it, unplug/replug a monitor scenario aside, restore always
+   lands on a visible screen). Outcome: ____________
+3. **Turn-taking feel — one instruction with pauses:** wake (or hold **ctrl+shift+m**)
+   and speak an instruction WITH pauses between phrases ("open notepad … then type
+   hello world") — the phrases join into ONE instruction (no half-action fires after
+   each phrase); watch the 3 s close: the window dispatches once, about 3 s after
+   your last word. Outcome: ____________
+4. **Media guard feel:** play a video/music while the assistant is idle (no wake) —
+   the assistant ignores it: no wake, no instruction, nothing transcribed from the
+   media audio. While a result is being spoken, media audio and your voice must NOT
+   interrupt it — only the hotkey barge-in does (hold **ctrl+shift+m** mid-speech:
+   playback stops at once, a fresh window opens). Outcome: ____________
+5. **Tray icon look + full stop-from-tray:** the tray icon is the marshmallow art
+   and visibly changes with state (idle/muted/attention distinct at a glance);
+   menu = Mute / Unmute / Open Marshmellow / Stop tasks / Quit. With a task running,
+   **Stop tasks** cancels it and stops any ongoing speech; **Quit** exits everything
+   — Task Manager shows no orphaned Marshmellow/piper processes afterwards.
+   Outcome: ____________
+
+**Done when:** the five outcomes are recorded verbatim in this block and copied
+into the M6 evidence block in [02-milestones.md](02-milestones.md); then delete
+this entry.
+
 ## Carry-over (lower priority, not blocking M2 DoD)
 
 - **Live-mic wake false-accept soak** (SP3 "Limitations", planned for M2): ≥ 1 h of
@@ -194,3 +236,7 @@ this entry.
   must NOT wake it (see assets/wake/README.md's recorded lookalike limitation).
 - **Mascot on-screen placement/feel** (M1 deferred offscreen verification): tray icon
   currently renders with the system default ("No Icon set" warning) — art is OQ-3.
+  → **Discharged by M6** (Tasks 1/2/5): the parametric art shipped (`ui/mascot_art`,
+  OQ-3 closed), the tray carries a per-state mascot still (no "No Icon set"), and
+  placement/drag/persistence are implemented and offscreen-tested; the user-physical
+  feel checks live in the M6 Task 6 checklist above.

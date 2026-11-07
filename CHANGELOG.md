@@ -5,6 +5,33 @@ All notable changes to Marshmellow are documented here. This project adheres to
 record with `git log --oneline`. The full build record lives in
 [`docs/plan/`](docs/plan/) (architecture, milestones, task plans, evidence).
 
+## Unreleased — M6 release-feedback round (2026-11-07 → 2026-11-08)
+
+Post-v0.1.0 daily-use feedback: the four flaws from the feedback brief fixed on
+`main` — no publish and no version bump (bundle rebuild is M6 Task 7; the
+publish/version call stays with the user).
+
+### M6 — Release feedback (2026-11-07 → 2026-11-08, commits `bb7f457…`)
+
+- **Added:** parametric mascot art pipeline — `ui/mascot_art.paint(state, phase, size)`
+  (deterministic, 8 states) + `tools/export_mascot_assets.py` → `assets/mascot/`
+  stills; closes OQ-3 (`bb7f457`); mascot placement — bottom-right default,
+  body-masked input (surroundings always pass through), drag with live clamp,
+  persisted `[ui] mascot_x/mascot_y`, restore clamped into a visible screen
+  (`ecd921d`); receiving-window turn-taking — collected speech becomes ONE
+  instruction (3 s no-voice close), abort intents discard a pending window
+  (`c1bcc18`), close tick re-arms from the window's remaining time (`1237620`);
+  app identity — per-state tray/window/exe icons from the mascot stills + quit
+  census (`f368dee`).
+- **Changed:** the echo guard is a hard half-duplex ingest gate (`IngestMode`
+  DROP/WAKE_ONLY/FULL) — while TTS plays nothing is heard (measured 0-ingestion
+  fixture), media audio without a receiving window is structurally unable to
+  become input, and voice barge-in is REMOVED (own-voice safety without AEC);
+  the hotkey is the only barge-in (`563dfbf`).
+- **Docs:** architecture reconciliation — §3.1/§3.9/§3.10/§3.11 re-read against
+  the source and rewritten to the implemented model; OQ-3 closed; M6
+  user-physical feel checklist (`docs(M6-T6)`).
+
 ## 0.1.0 — 2026-11-07
 
 First release: a hands-free, voice-controlled Windows desktop agent — wake word /

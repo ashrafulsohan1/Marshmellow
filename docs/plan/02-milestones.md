@@ -249,6 +249,39 @@ Task 7.
   [pending-user-verifications.md](pending-user-verifications.md) together with the M5
   Task 4 onboarding/settings checklist (one session discharges both).
 
+### M6 — Release feedback (size: S)
+**Goal:** fix the four post-v0.1.0 daily-use flaws — mascot art (OQ-3), placement/persistence, turn-taking (never hears itself or media), app identity + full tray control — then rebuild the verified bundle.
+**Scope:** parametric mascot art + export pipeline; receiving-window turn-taking; hard half-duplex ingest gate; per-state identity icons; docs reconciliation.
+**DoD:** the feedback brief's four flaws fixed and gated offscreen; bundle rebuilt + verified (Task 7); the user-physical feel checklist recorded.
+
+**Task 6 evidence (2026-11-08, docs sweep):** §3.1/§3.9/§3.10/§3.11 of
+[01-architecture.md](01-architecture.md) re-read against the source section by section
+and rewritten to the implemented model — interface sketches now match the real
+`AudioEngine` (no `set_mode`, no `MuteChanged`; `pcm: bytes`), `PiperSpeaker`
+(`start/say/stop/quit`, priority queue; the "URLs/IDs summarized" speakability
+rewriter never existed — brevity lives in the planner prompt), the tray
+(`MascotIconProvider` per-state stills, Mute/Unmute/Open Marshmellow/Stop tasks/Quit,
+engine-decided semantics, no left-click toggle) and the real TasksDashboard (no
+transcript pane — transcripts live in the §3.15 JSONL logs); mascot §3.10 gained the
+8th state `attention` and lost the nonexistent `MascotMenuAction`/right-click menu and
+auto-dim claims. OQ-3 **closed** with the decision recorded; the M6 user-physical feel
+checklist (art approval, drag/restart feel, 3 s close feel, media-guard feel, tray look
++ stop-from-tray) is recorded in
+[pending-user-verifications.md](pending-user-verifications.md). Gates at commit:
+`uv run pytest -q` (551 passed, 3 skipped, 17 deselected) / `ruff check .` / `mypy`
+(43 files) green — docs-only change. `uv run pytest -m scenario`: 52 passed /
+**1 environmental failure** — `test_fixture_scenario_browser` cannot currently pass
+on this machine: Brave's renderer accessibility never exposes the page tree (probed
+with the app's own walk: focused fresh walks over 12 s → 139 chrome-only elements,
+the pin Edit never appears; "Energy Saver is on" per the chrome tree), while the
+fixture file is unchanged since M3 (`4bcb287`), the failure sits in the fixture
+launch/pin phase before any Marshmellow code runs, and the same suite was green at
+M6-T4 (`563dfbf`). The clock fixture flaked in one run and passed in re-runs (real-app
+launch timing). Both are `@pytest.mark.manual` real-desktop tests — the default suite
+deselects them; re-run in Task 7's verification pass.
+**The full M6 DoD evidence block lands with Task 7** (bundle rebuild + in-workflow
+verification pass); the user-physical entries remain open until the feel session runs.
+
 ## Testing strategy (applies from M1 onward)
 
 **Principle: no human speech required to run the suite.** Every layer is fake-able at its contract; real audio is exercised by a small fixture suite, and by the user.
