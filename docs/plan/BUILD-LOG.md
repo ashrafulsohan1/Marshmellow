@@ -16,6 +16,8 @@
 
 ## Pause-safety by design (2026-11-06)
 
+**Release gate hardening (2026-11-07):** the workflow now runs the **independent release verification itself** — a fresh security auditor + clean-room verifier run against the final release candidate *inside* the pipeline, between "Prepare the release" and "Publish to GitHub". Publish is gated: any high-severity finding or clean-room failure triggers bounded fix rounds (≤2), and if verification still fails, **nothing is published** and the run returns the blocker. The 2026-11-06 external agents' reports (RELEASE-AUDIT.md, CLEANROOM-VERIFY.md) were snapshots mid-build; the in-workflow pass (`*-final.md`) verifies the tree that actually ships.
+
 Three layers, so a quota pause costs nothing and resumes itself:
 
 1. **Journal replay (same-lineage resume).** On a quota stop, `ResumeWorkflowRun` replays every settled step at zero tokens and re-dispatches only the in-flight ask. Requirement: the script file stays byte-identical — **no edits of any kind during a pause** (personas are cache keys; the 2026-11-05 persona edit caused a ~3M-token re-walk).
