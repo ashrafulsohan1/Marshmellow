@@ -1,5 +1,9 @@
 """Voice loop integration (M2 Task 8) — barge-in, kill switch, echo guard.
 
+M6 Task 4 rework: the barge-in section pins the REMOVED voice barge-in (hard
+half-duplex — segments during playback are dropped) and the echo guard
+suppression; the hotkey escape fixtures live in tests/audio/test_echo_guard.py.
+
 All headless: segments, wake and speaking events go straight onto the bus
 (the FakeSTT fixture encoding carries the UTF-8 text in `pcm`); fake mascot /
 audio-engine / hotkey-hook doubles make mascot, mute and activation effects
@@ -281,13 +285,17 @@ async def test_stop_everything_cancels_running_task(tmp_path: Path) -> None:
         app.stop()
 
 
-# -- barge-in --------------------------------------------------------------------
+# -- barge-in (M6 T4 rework: hard half-duplex, hotkey-only) -----------------------
 
 
 @pytest.mark.scenario
-async def test_speech_during_speaking_barges_in_and_next_segment_processes(
+async def test_speech_during_speaking_is_dropped_and_next_segment_processes(
     tmp_path: Path,
 ) -> None:
+    """M6 T4: voice barge-in is REMOVED (own-voice safety — without AEC the app
+    cannot distinguish its own speech from the user's). A segment during
+    playback is dropped untranscribed; TTS keeps playing; the running turn is
+    untouched. The hotkey is the only barge-in (tests/audio/test_echo_guard.py)."""
     pack = BlockingPack()
     app = _app(tmp_path, pack=pack)
     events = _task_events(app)
@@ -297,21 +305,20 @@ async def test_speech_during_speaking_barges_in_and_next_segment_processes(
         await _wait_for(lambda: pack.calls == ["notepad"])  # turn in flight
 
         app.bus.emit(SpeakingStarted())  # the "On it." ack is playing
-        app.bus.emit(_segment("open calc"))  # user talks over the agent
-        await _wait_for(lambda: any(e.type == "cancelled" for e in events))
+        app.bus.emit(_segment("open calc"))  # audio during playback — NOT barge-in
+        await asyncio.sleep(0.2)
 
-        assert app.tts.stop_calls >= 1, "barge-in must stop TTS playback"
-        pack.release.set()
+        assert app.tts.stop_calls == 0, "playback is not killed by captured speech"
+        assert not any(e.type == "cancelled" for e in events), "the turn is untouched"
+        assert pack.calls == ["notepad"], "the mid-playback segment was dropped"
+
+        pack.release.set()  # the in-flight turn finishes normally (never cancelled)
+        app.bus.emit(SpeakingStopped())  # playback over (what PiperSpeaker emits)
+        app.bus.emit(_segment("open calc"))  # ingest is open again: it processes
         await _wait_for(
             lambda: any(e.type == "result" and "calc" in e.payload.lower() for e in events)
         )
-        assert pack.calls == ["notepad", "calc"], "the barge-in segment still processes"
-        killed = [seq for seq in _trace(events).values() if "cancelled" in seq]
-        assert killed and killed[0][-1] == "cancelled"
-
-        app.bus.emit(SpeakingStopped())  # playback over (what PiperSpeaker emits)
-        app.bus.emit(_segment("open explorer"))
-        await _wait_for(lambda: pack.calls == ["notepad", "calc", "explorer"])
+        assert pack.calls == ["notepad", "calc"]
     finally:
         pack.release.set()
         app.stop()
@@ -319,22 +326,29 @@ async def test_speech_during_speaking_barges_in_and_next_segment_processes(
 
 @pytest.mark.scenario
 async def test_loop_stays_responsive_during_slow_transcribe(tmp_path: Path) -> None:
-    """Review Focus 2: STT runs on a worker thread; the loop never waits on it."""
+    """Review Focus 2: STT runs on a worker thread; the loop never waits on it.
+    M6 T4: a segment arriving during playback is dropped WITHOUT queuing behind
+    the in-flight transcribe, and the loop still accepts later segments."""
     stt = SlowSTT(delay=1.0)
     app = _app(tmp_path, stt=stt)
     app.start()
     try:
-        app.bus.emit(SpeakingStarted())
-        app.bus.emit(_segment("first"))
+        app.bus.emit(_segment("first"))  # no playback: a slow transcribe is in flight
         await _wait_for(lambda: stt.started_count == 1)
 
         began = time.monotonic()
-        app.bus.emit(_segment("second"))  # barge-in while the first still transcribes
-        await _wait_for(lambda: app.tts.stop_calls >= 1)
+        app.bus.emit(SpeakingStarted())
+        app.bus.emit(_segment("second"))  # during playback: dropped, never queued
+        await asyncio.sleep(0.2)
         elapsed = time.monotonic() - began
 
-        assert elapsed < stt.delay, "barge-in must not wait for the in-flight transcribe"
+        assert elapsed < stt.delay, "the drop must not wait for the in-flight transcribe"
+        assert stt.started_count == 1, "the mid-playback segment was never transcribed"
         assert stt.finished_count == 0, "the first transcribe was still running"
+
+        app.bus.emit(SpeakingStopped())
+        app.bus.emit(_segment("third"))
+        await _wait_for(lambda: stt.started_count == 2)  # the loop is responsive again
     finally:
         app.stop()
 

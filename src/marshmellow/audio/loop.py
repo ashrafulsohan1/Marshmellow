@@ -10,16 +10,22 @@ pipeline (M6 Task 3 turn-taking):
 
 Safety behaviors that must always work:
 
-- **Barge-in** (Review Focus 5): a SpeechSegment while TTS is playing stops
-  playback and cancels the in-flight turn — and the new segment is still
-  processed.
+- **Echo/media guard** (Review Focus 1, M6 T4): while TTS plays
+  (``SpeakingStarted…Stopped``) the ENTIRE ingest path is gated off — no
+  wake scoring, no VAD, no STT, no window opening (hard half-duplex, plan
+  option (a), measured). With no receiving window open, every chunk is
+  dropped BEFORE VAD (media guard): media audio without wake is structurally
+  unable to become input. The gate lives in the capture engine
+  (``audio.capture.IngestGate``/``IngestMode``); this loop binds its two
+  policy probes — the playback flag and the receiving window.
+- **Barge-in** (§3.9, M6 T4): voice barge-in is REMOVED — a SpeechSegment
+  while TTS plays is dropped untranscribed, because without AEC the app
+  cannot distinguish its own speech (or media) from the user's. The hotkey
+  is the only barge-in: it kills playback and opens a fresh window.
 - **Kill switch** (§3.13): "stop everything" cancels every running task,
   stops TTS, drops the mascot to idle — and DISCARDS a pending receiving
   window, so a collected-but-undispatched instruction never executes after
   the kill.
-- **Echo guard** (Review Focus 1): ``WakeDetected`` while TTS plays is
-  suppressed, so the agent never hears itself wake. Speech capture stays
-  live during playback — that is what makes barge-in possible.
 
 Turn-taking: wake/hotkey/spoken wake ``open()`` the ReceivingWindow; the
 first instruction speech while awake opens it implicitly (the M2
@@ -41,6 +47,7 @@ import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Final, Protocol
 
+from marshmellow.audio.capture import IngestGate
 from marshmellow.audio.turn_taking import ReceivingWindow
 from marshmellow.core.contracts import (
     ContextSnapshot,
@@ -93,13 +100,26 @@ class VoiceLoop:
     where ``TaskManager.submit_text_background`` needs a running loop anyway.
     """
 
-    def __init__(self, app: App, window: ReceivingWindow | None = None) -> None:
+    def __init__(
+        self,
+        app: App,
+        window: ReceivingWindow | None = None,
+        gate: IngestGate | None = None,
+    ) -> None:
         self._app = app
         self._builder = PromptBuilder()
         self._window = window if window is not None else ReceivingWindow(
             bus=app.bus, clock=datetime.now
         )
-        self._speaking = False  # TTS playback window (echo guard + barge-in)
+        self._speaking = False  # TTS playback window (hard half-duplex, M6 T4)
+        # The half-duplex + media-guard policy (M6 T4): this loop owns the two
+        # inputs and the capture engine polls the gate per chunk. Probes —
+        # never a pushed copy — so the gate cannot drift from this loop.
+        self._gate = gate if gate is not None else IngestGate()
+        self._gate.bind(
+            speaking=lambda: self._speaking,
+            window_open=lambda: self._window.is_open,  # a property: probe it, don't snapshot it
+        )
         self._sleeping = False  # "go to sleep": instructions dropped until wake
         self._inflight: asyncio.Task[TaskHandle] | None = None
         self._seg_lock = asyncio.Lock()  # segments are processed in arrival order
@@ -196,20 +216,32 @@ class VoiceLoop:
         task.add_done_callback(self._seg_tasks.discard)
 
     def _on_speaking_started(self, event: SpeakingStarted) -> None:
-        self._speaking = True
+        self._speaking = True  # the ingest gate reads this probe per chunk (M6 T4)
 
     def _on_speaking_stopped(self, event: SpeakingStopped) -> None:
-        self._speaking = False
+        self._speaking = False  # playback over: ingest reopens
 
     def _on_wake_detected(self, event: WakeDetected) -> None:
         if self._speaking:
-            # Echo guard (Review Focus 1): TTS audio must not re-trigger the wake
-            # word — that is the infinite self-talk loop.
+            # Echo guard (Review Focus 1): TTS audio must not re-trigger the
+            # wake word — that is the infinite self-talk loop. Defense in
+            # depth since M6 T4: the ingest gate already stopped the tap while
+            # speaking, so this also catches a wake event in flight at
+            # SpeakingStarted.
             logger.info("wake suppressed while speaking (score=%.2f)", event.score)
             return
         self._activate()
 
     def _on_hotkey_pressed(self, event: HotkeyPressed) -> None:
+        if self._speaking:
+            # Barge-in escape (M6 T4): the hotkey is the ONLY barge-in in v1 —
+            # voice barge-in is removed because the app cannot distinguish its
+            # own speech (or media) from the user's without AEC. Kill playback
+            # and reopen ingest immediately; the async Stopped event just
+            # re-clears the flag.
+            logger.info("hotkey barge-in: killing TTS playback")
+            self._app.tts.stop()
+            self._speaking = False
         self._activate()
 
     def _activate(self) -> None:
@@ -222,10 +254,14 @@ class VoiceLoop:
 
     async def _handle_segment(self, segment: SpeechSegment) -> None:
         if self._speaking:
-            logger.info("barge-in: speech during TTS playback")
-            self._app.tts.stop()
-            self._speaking = False  # keep responding even if Stopped is never emitted
-            self._cancel_inflight()
+            # Hard half-duplex (M6 T4): the capture gate already stopped the
+            # mic for playback; a segment here was in flight when
+            # SpeakingStarted landed. Without AEC the app cannot tell its own
+            # speech (or media) from the user's — drop it untranscribed. Voice
+            # barge-in is removed (own-voice safety); the hotkey is the only
+            # barge-in (§3.9).
+            logger.info("segment dropped: TTS playback active (hard half-duplex)")
+            return
         async with self._seg_lock:  # order: one segment fully handled at a time
             transcript = await asyncio.to_thread(self._transcribe, segment)
             text = transcript.text.strip()

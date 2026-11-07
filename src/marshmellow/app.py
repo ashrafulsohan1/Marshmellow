@@ -46,7 +46,7 @@ from marshmellow.audio.activation import (
     wake_threshold_from_calibration,
 )
 from marshmellow.audio.ask import AskUserChannel
-from marshmellow.audio.capture import AudioEngine
+from marshmellow.audio.capture import AudioEngine, IngestGate
 from marshmellow.audio.loop import Transcriber, VoiceLoop
 from marshmellow.core import secrets
 from marshmellow.core.assets import default_wake_model_dir, default_wake_model_path
@@ -266,13 +266,21 @@ class App:
         self._hotkey_backend = hotkey_backend
         self._wake_model_dir = wake_model_dir
         self._build_activation(settings)  # creates self.wake_tap when the wake channel is on
+        # M6 T4: the half-duplex + media-guard ingest gate (§3.1). The voice
+        # loop binds the policy probes (its TTS playback flag + receiving
+        # window); the capture engine polls the gate once per mic chunk —
+        # while TTS plays nothing is ingested at all, and with no window open
+        # chunks are dropped before VAD (media audio cannot become input).
+        self.ingest_gate = IngestGate()
         self.audio_engine: AudioEngine | None = audio_engine
         if self.audio_engine is None and not headless:
             # real mic; headless stays silent. The D8 tap (when the wake channel
             # is on) bridges every unmuted chunk to the wake watcher's queue.
-            self.audio_engine = AudioEngine(bus=self.bus, chunk_tap=self.wake_tap)
+            self.audio_engine = AudioEngine(
+                bus=self.bus, chunk_tap=self.wake_tap, ingest_gate=self.ingest_gate
+            )
         self._quit_requested = False
-        self.voice = VoiceLoop(self)
+        self.voice = VoiceLoop(self, gate=self.ingest_gate)
         self.bus.subscribe(ActivationDegraded, self._on_activation_degraded)
         self._wire_voice_feedback()
 
