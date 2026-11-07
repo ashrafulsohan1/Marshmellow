@@ -151,11 +151,20 @@ was already credited (triggers on unchanged content)**. Smoke proof at soak scal
 http://127.0.0.1` rss): intended changes == triggers credited, 0 false positives,
 verdict PASS.
 
-**Soak verdict: PENDING** — the 24 h run (`--hours 24 --interval-s 300`, fixture
-feed) launched 2026-11-07T00:45:58, completes 2026-11-08T00:45:58 (~288 checks, 6
-intended changes; report `soak_report.jsonl` + `mutations.jsonl` in the run dir).
-This block is updated with the final summary — trigger count / error count /
-false-positive report rate — when the run completes.
+**Soak verdict: PENDING — first run terminated externally at 5.75 h, partial
+record clean.** The 24 h run (`--hours 24 --interval-s 300`, fixture feed,
+launched 2026-11-07T00:45:58) was killed by the host machine at ~06:31 (no
+harness fault: no traceback, no summary — the process was removed externally
+while other sessions actively use the machine; no reboot). Over its 5.75 h it
+behaved exactly per the verdict criteria: ~69 polls at 300 s ± 10 %, the single
+intended change in that window (v1, 04:11:41) produced **exactly one trigger**
+(04:16:12, credited), the re-arm sealed, **0 check errors, 0 false-positive
+candidates** (`soak_report.jsonl` + `mutations.jsonl` in the run dir; report
+schema `{at, task, changed, ok, summary, error}`). The full 24 h verdict (6
+intended changes, false-positive report rate) still requires a complete run:
+relaunch `uv run python tools/soak_m4.py --hours 24 --interval-s 300` from a
+session that owns the machine window, on a tree at rest — the harness imports
+the live tree and isolates all state in its own run dir.
 
 **Task 7 Step 4 — the assisted/manual M4 checklist — is the remaining user-physical
 step** → [pending-user-verifications.md](pending-user-verifications.md) (BYOK live
