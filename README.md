@@ -23,15 +23,34 @@ operates the computer the way a person would.
   sensitive actions require spoken confirmation; "stop everything" kills all
   tasks; fail-closed confirmations.
 
-## Install & run (Windows, Python 3.12)
+## Install & run (Windows)
+
+**Frozen bundle (no Python needed)** — build it once, run it anywhere:
+
+```powershell
+uv run python installer/fetch_bundle_inputs.py            # voice + ct2 model (re-downloadable, untracked)
+uv run pyinstaller installer/marshmellow.spec --noconfirm
+dist\Marshmellow\Marshmellow.exe                          # tray + mascot; first run opens the onboarding wizard
+dist\Marshmellow\Marshmellow.exe --smoke                  # headless verification: prints "smoke ok", exit 0
+```
+
+The bundle ships the faster-whisper STT model, the piper voice, and the
+self-trained wake model inside `_internal\` — a clean account installs
+offline-capable; the only thing you supply is your own LLM API key (BYOK,
+stored in Windows Credential Manager, never on disk). The bundle contains two
+exes: `Marshmellow.exe` (GUI) and `piper_worker.exe` — the isolated subprocess
+that keeps piper's GPL code out of the GUI process. See
+[docs/user-guide.md](docs/user-guide.md) for the full walkthrough
+(onboarding, activation modes, safety levels, privacy).
+
+**From source (Python 3.12 + uv):**
 
 ```powershell
 uv sync
 uv run python -m marshmellow
 ```
 
-Configure your own LLM key (BYOK — stored in Windows Credential Manager,
-never on disk):
+Configure your own LLM key (BYOK):
 
 ```powershell
 uv run python -m marshmellow.tools.set_key
@@ -45,8 +64,10 @@ Then point `[providers.llm]` at your OpenAI-compatible endpoint in
 - `src/marshmellow/` — the agent (audio, STT/TTS, planner, perception,
   actions, safety, tasks, UI).
 - `docs/plan/` — the full planning + build record (architecture, milestones,
-  spikes, audits).
-- `tools/` — spike harnesses and training scripts.
+  spikes, audits); `docs/user-guide.md` — the end-user walkthrough.
+- `installer/` — the pyinstaller spec + build-time model fetcher (OQ-9).
+- `tools/` — spike harnesses, benches, the wake-model trainer, and the
+  `dogfood_report.py` day report.
 
 ## Development
 

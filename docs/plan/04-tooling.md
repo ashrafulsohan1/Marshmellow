@@ -24,6 +24,17 @@ exists open source. This doc decides **which ingredients we adopt vs build**.
 | RSS parsing (M4) | `feedparser` (≥6.0) | **BSD-2-Clause** (verified: 6.0.14 dist metadata, 2026-11-06) | tolerant RSS/Atom parsing for monitor checks — **ADOPTED in M4 Task 1** (`tasks/monitors.py`) | hand-rolled `xml.etree` (no) |
 | Packaging (M5) | `uv`, `ruff`, `pytest`, `pyinstaller` | MIT/Apache | scaffold → installer | MSIX |
 
+**Packaging row (resolved, M5 Task 7):** the installer is `installer/marshmellow.spec` —
+pyinstaller **one-dir, two exes** (OQ-9 closed). Dev-only deps added to the `dev`
+group for it, licenses verified from their dist metadata (2026-11-07):
+`pyinstaller>=6.10` (**GPL-2.0-or-later with the bundling runtime exception** — its
+intended use is packaging third-party apps like this MIT one; the bundle contains
+our code, not pyinstaller's, post-exception) and `psutil>=5.9` (**BSD-3-Clause**) for
+`tools/bench_startup_m5.py`. Both stay out of the product runtime (`pyproject.toml`
+dev group; the shipped exe carries neither). GPL note: piper (GPL-3.0) ships as a
+separate frozen exe, not linked into the GUI exe — the SP7 subprocess ruling
+translates to the bundle unchanged.
+
 ## 2. EVALUATE (patterns or opt-in, decide in SP7/M2)
 
 - **Pipecat** (BSD-2, SP7-confirmed) — voice-pipeline patterns (transport/VAD/echo handling). Likely *pattern adoption only*; pulling the framework would fight our single-process asyncio design.

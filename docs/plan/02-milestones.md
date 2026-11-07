@@ -198,6 +198,57 @@ remains the trusted activation (D2) and the hands-free call goes to the Task 7 c
 [pending-user-verifications.md](pending-user-verifications.md)). The full M5 DoD evidence block lands with
 Task 7.
 
+**Task 7 evidence (2026-11-07, agent-run on the dev desktop; OQ-9 closed):**
+
+- **Installer (OQ-9 → pyinstaller one-dir, two exes — decision recorded in
+  [05-open-questions.md](05-open-questions.md)):** `uv run python
+  installer/fetch_bundle_inputs.py` (voice present; ct2 `Systran/faster-whisper-base`
+  fetched into the untracked `models/` from the warm HF cache) → `uv run pyinstaller
+  installer/marshmellow.spec --noconfirm` → `dist/Marshmellow/` (714 MB one-dir) with
+  `Marshmellow.exe` + sibling `piper_worker.exe` (SP7 GPL boundary survives freezing —
+  piper imports only in the worker process; the GUI Analysis even excludes the worker
+  module). Packaged datas verified on disk: `_internal/wake/hey-marshmellow.onnx`
+  (+ Apache-2.0 feature extractors — D8 ship call RESOLVED, wake path SHIPS),
+  `_internal/voices/en_US-lessac-medium.onnx(.json)`,
+  `_internal/models/faster-whisper-base/model.bin`. **Headless install verification:**
+  `dist\Marshmellow\Marshmellow.exe --smoke` → `smoke ok`, exit 0.
+- **Frozen-model resolution proven in the REAL GUI boot** (the bench's first run):
+  session JSONL shows `loading STT model …\dist\Marshmellow\_internal\models\faster-whisper-base`
+  and `TTS voice: en_US-lessac-medium (…\_internal\voices\…)` — no hub download, no
+  `MARSHMELLOW_VOICE_DIR`. Two package-data gaps were caught exactly here and fixed in
+  the spec (`collect_data_files`): faster_whisper's silero-VAD onnx (boot crashed without
+  it) and openwakeword's `resources/models` (resolved relative to the package, unlike
+  our copies in `_internal/wake`).
+- **Bench (`tools/bench_startup_m5.py --runs 3`, real clock, 60 s settle, RSS = app +
+  children sum → [spikes/data/m5_startup.json](spikes/data/m5_startup.json)):**
+
+  | | pre-tuning | post-tuning |
+  |---|---|---|
+  | cold start (median) | 2.36 s | **2.06 s** (target ≤ 10 s → PASS) |
+  | idle RSS sum (max of 3) | **536.8 MB — MISS** | **297.5 MB** (target ≤ 400 MB → PASS) |
+
+  The MISS is recorded with the levers, not silently tuned: lazy STT load
+  (`FasterWhisperSTT(lazy=True)` — ct2 session loads on first transcribe, measured
+  ~0.6 s once) + deferred voice load (piper_worker loads the voice on the first stdin
+  line) → −44 % idle RSS, both in [spikes/data/m5_startup.json](spikes/data/m5_startup.json)
+  under `tuning`, pinned by `tests/stt/test_fasterwhisper.py::test_lazy_stt_defers_model_load_to_first_transcribe`
+  and `tests/tts/test_piper.py::test_worker_defers_voice_load_to_first_utterance`.
+- **Dogfood tooling:** `uv run python tools/dogfood_report.py --date YYYY-MM-DD` turns
+  the "zero crashes" DoD into a grep (exit 1 on any ERROR-with-traceback). Proven on
+  the existing M2–M5-era session logs: 2026-11-04 → 0 crashes; 2026-11-06 → 0 crashes,
+  5 instructions, 4 planner turns, 4 safety decisions. Spoken results and monitor
+  triggers are greppable from M5 on (the new `spoken (prio, type):` session-log line).
+- **Gates:** 493 passed, 3 skipped, 17 deselected · `ruff check .` clean · `mypy` clean
+  (43 files). Commits `31b2c8e` (bundle), `bdb6fc7` (bench+levers+report), then the
+  `docs:` evidence commit.
+- **Soak verdicts carried:** monitors 5.75 h partial-clean (24 h verdict still pending
+  a relaunch, M4 Task 7 evidence above); wake ambient soak 7 false accepts/hour at
+  threshold 0.99 — **the hands-free wake call remains user-physical**, Step 6 of the
+  Task 7 checklist (clean-account install + day dogfood + false-accept feel) is THE
+  milestone's remaining work, recorded verbatim in
+  [pending-user-verifications.md](pending-user-verifications.md) together with the M5
+  Task 4 onboarding/settings checklist (one session discharges both).
+
 ## Testing strategy (applies from M1 onward)
 
 **Principle: no human speech required to run the suite.** Every layer is fake-able at its contract; real audio is exercised by a small fixture suite, and by the user.

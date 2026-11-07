@@ -111,6 +111,37 @@ wake model isn't trained yet. Start the app with `uv run python -m marshmellow`.
 copied into the M4 evidence block in [02-milestones.md](02-milestones.md);
 then delete this entry.
 
+## M5 Task 7 — installer + milestone DoD checklist (user-physical, the milestone's ONLY user-required work)
+
+**Deferred from:** M5 plan Task 7 Steps 6 — needs a fresh Windows local account, a
+real mic/speaker and a full workday; everything automatable around it is already
+implemented and gated: the bundle builds (`uv run pyinstaller
+installer/marshmellow.spec --noconfirm`), `dist/Marshmellow/Marshmellow.exe --smoke`
+exits 0 (headless install verification), the cold-start/idle-RSS bench ran
+(`docs/plan/spikes/data/m5_startup.json`), and `tools/dogfood_report.py` turns the
+"zero crashes" DoD into a command. Discharge ALL steps in ONE session.
+
+**Run** (outcomes recorded verbatim below each step):
+
+1. **Clean-account install (DoD):** on a fresh Windows local account, run the built bundle → onboarding wizard appears → mic check passes → BYOK key stored → wake word works hands-free (**"hey marshmellow"** with no hotkey — first session led by the self-trained model) → enable autostart → sign out/in → the app launches at login. Outcome: ____________
+2. **Day-long hands-free dogfood (DoD):** use Marshmellow as the primary interface for a full workday, wake-word-led; afterwards `uv run python tools/dogfood_report.py --date <day>` → crash count **0**, friction list recorded. Outcome: ____________
+3. **Wake false-accept feel:** during the dogfood day, note any unprompted wake (the subjective complement to Task 5's 1 h soak). Outcome: ____________
+4. **D8 ship call (only if the feature-model license check is unresolved):** ship the wake path in the bundle, or release hotkey-only. Outcome: ____________
+
+**Context for step 1:** the wake model ships in the bundle (`_internal/wake`, D8) —
+but Task 5's ambient soak measured **7 false accepts/hour at threshold 0.99**, so
+expect possible unprompted wakes; that observation IS step 3's data point. The
+hands-free call was explicitly routed here (02-milestones M5 evidence block):
+"saying 'hey marshmellow' aloud must wake the app — a human voice at threshold 0.99
+is unverified until someone speaks." Step 4 is conditional: the feature-extractor
+license check IS resolved (Apache-2.0, recorded in `assets/wake/README.md`), so
+unless it is re-opened, the ship call defaults to **ship the wake path** (the spec
+already bundles it) — record that decision, or re-open and choose hotkey-only.
+
+**Done when:** the four outcomes are recorded verbatim in this block and copied
+into the M5 evidence block in [02-milestones.md](02-milestones.md); then delete
+this entry.
+
 ## M5 Task 4 — first-run onboarding + settings dialog (user-physical)
 
 **Deferred from:** M5 plan Task 4 — the wizard and the modal dialog need a human
