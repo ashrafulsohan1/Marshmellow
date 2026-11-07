@@ -15,6 +15,7 @@ and runnable by the agent without a user.
 
 from __future__ import annotations
 
+import ctypes
 import sys
 from pathlib import Path
 
@@ -31,6 +32,28 @@ from marshmellow.tts.fake import FakeTTS
 
 SCENARIOS = Path(__file__).parent / "scenarios"
 
+
+def _skip_if_user_active() -> None:
+    """Live-use incidents (2026-11-08): these scenarios launch and close REAL
+    apps on the user's desktop, and a gate run while the user works interrupts
+    them — Win11 Notepad session-restore turned one such close into lost work.
+    Whenever the user has touched input recently, defer the real-app run."""
+    if sys.platform != "win32":
+        return
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_ulong)]
+
+    lii = LASTINPUTINFO()
+    lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+        return
+    idle_s = (ctypes.windll.kernel32.GetTickCount() - lii.dwTime) / 1000.0
+    if idle_s < 120.0:
+        pytest.skip(
+            f"user active (last input {idle_s:.0f}s ago) — real-app scenarios deferred"
+        )
+
 FIXTURE_APPS = [
     "notepad",
     "calculator",
@@ -44,6 +67,7 @@ FIXTURE_APPS = [
 
 
 def _run_fixture(name: str, tmp_path: Path):
+    _skip_if_user_active()
     spec = load_scenario(SCENARIOS / f"{name}.yaml")
     provider = scripted_provider(spec)
     report = run_fixture(

@@ -68,6 +68,26 @@ _STRICT_ESCALATED: Final[frozenset[str]] = frozenset({"type_text", "uia_set_valu
 
 _BATCH_KEYS: Final = ("delete_items", "delete_count")
 
+# Window-killer hotkeys close a TOP-LEVEL window — every tab in a browser, the
+# whole document in an editor. Live-use incident (2026-11-08): "close the tab
+# you opened" reached the browser as a whole-window close while the user was
+# working in it. These are never autonomous: L3 (spoken confirmation), before
+# preset/override. A plain ctrl+w closes ONE tab and stays at the kind table's
+# level — that is the correct shape for tab-close instructions.
+_WINDOW_KILLER_COMBOS: Final[frozenset[str]] = frozenset(
+    {"alt+f4", "ctrl+shift+w", "ctrl+shift+f4"}
+)
+
+
+def _is_window_killer(req: ActionRequest) -> bool:
+    if req.kind != "hotkey":
+        return False
+    combo = req.payload.get("combo")
+    if not isinstance(combo, str):
+        return False
+    normalized = "+".join(part.strip().lower() for part in combo.split("+"))
+    return normalized in _WINDOW_KILLER_COMBOS
+
 
 def _max_level(a: RiskLevel, b: RiskLevel) -> RiskLevel:
     return a if _LEVEL_ORDER[a] >= _LEVEL_ORDER[b] else b
@@ -117,6 +137,11 @@ class RiskPolicy:
             if batch > BATCH_DELETE_THRESHOLD:
                 return "L3"
             level = _max_level(level, "L2")  # a small destructive batch still mutates
+
+        # Window-killer hotkeys: spoken confirmation always (see the constant's
+        # note) — preset, override and declared risk cannot wave them through.
+        if _is_window_killer(req):
+            return "L3"
 
         if self.preset == "strict" and req.kind in _STRICT_ESCALATED:
             level = "L3"

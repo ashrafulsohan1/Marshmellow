@@ -12,6 +12,32 @@ def req(kind: ActionKind, **payload: object) -> ActionRequest:
     return ActionRequest(kind=kind, payload=dict(payload), rationale="test", risk="L0")
 
 
+@pytest.mark.parametrize(
+    "combo",
+    ["alt+f4", "Alt+F4", " ctrl+shift+w ", "ctrl + shift + f4"],
+)
+def test_window_killer_hotkeys_escalate_to_l3(combo: str) -> None:
+    """Live-use incident: a tab-close instruction reached the browser as a
+    whole-window close. Window-killer combos always demand confirmation."""
+    policy = RiskPolicy()
+    assert policy.classify(req("hotkey", combo=combo), None) == "L3"
+
+
+@pytest.mark.parametrize(
+    "combo",
+    ["ctrl+w", "ctrl+s", "ctrl+shift+s"],
+)
+def test_non_window_killer_hotkeys_keep_their_level(combo: str) -> None:
+    """ctrl+w closes ONE tab — the correct tab-close shape stays autonomous."""
+    policy = RiskPolicy()
+    assert policy.classify(req("hotkey", combo=combo), None) == "L2"
+
+
+def test_window_killer_escalation_beats_relaxed_preset_and_override() -> None:
+    policy = RiskPolicy(preset="relaxed", overrides={"hotkey": "L1"})
+    assert policy.classify(req("hotkey", combo="alt+f4"), None) == "L3"
+
+
 def element(name: str = "OK button", *, password: bool = False) -> Element:
     return Element(
         ref="e1", role="button", name=name, bbox=Rect(x=0, y=0, w=10, h=10),
