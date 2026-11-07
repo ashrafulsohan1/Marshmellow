@@ -55,6 +55,12 @@ class Instruction(BaseModel):
     context: ContextSnapshot
 
 
+class InstructionReady(BaseModel):
+    """A receiving window closed: the joined collected speech is ONE instruction (M6 T3)."""
+
+    text: str
+
+
 class Rect(BaseModel):
     x: int
     y: int
