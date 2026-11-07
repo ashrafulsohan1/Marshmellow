@@ -9,7 +9,9 @@ M6 Task 4 adds the half-duplex echo/media gate to the ingest path: the
 engine polls an `IngestGate` once per unmuted chunk and either drops it
 outright (TTS playing — hard half-duplex), feeds only the wake tap (no
 window — the media guard: dropped before VAD), or ingests it fully (a
-window is open).
+window is open). Entering DROP resets the segmenter; leaving FULL into
+WAKE_ONLY with an utterance in flight drains it to its flush instead
+(review fix — the 3 s window timeout must not eat a mid-utterance sentence).
 """
 
 from __future__ import annotations
@@ -43,7 +45,10 @@ class IngestMode(Enum):
     WAKE_ONLY — no receiving window: the media guard. Chunks still feed the
         wake tap (voice activation must stay able to open a window) but are
         dropped BEFORE VAD — media audio without wake is structurally unable
-        to become STT input.
+        to become STT input. (One bounded exception, the drain-to-flush: a
+        window that closed mid-utterance keeps the VAD fed until that one
+        in-flight utterance resolves — a sentence spoken past the 3 s timeout
+        arrives late-but-complete instead of being lost.)
     FULL — a window is open: wake scoring + VAD + STT ingest.
     """
 
@@ -166,13 +171,19 @@ class VADSegmenter:
                               started_at=started, ended_at=ended)]
 
     def reset(self) -> None:
-        """Discard any in-flight speech state (M6 T4): the ingest gate dropped
-        the middle of the stream, so a partial buffer must never resurface and
-        close as a segment stitched across the gap."""
+        """Discard any in-flight speech state (M6 T4): the ingest gate entered
+        the playback wall, so a partial buffer must never resurface and close
+        as a segment stitched across the gap."""
         self._buffer.clear()
         self._speech_chunks = 0
         self._silence_chunks = 0
         self._in_speech = False
+
+    @property
+    def in_flight(self) -> bool:
+        """An utterance is open: speech has been flagged since the last
+        flush/reset (review fix — the window-timeout drain reads this)."""
+        return self._in_speech
 
 
 class AudioEngine:
@@ -185,9 +196,14 @@ class AudioEngine:
     `ingest_gate` (M6 Task 4) is the half-duplex + media-guard policy, polled
     once per unmuted chunk: DROP (TTS playing — no tap, no VAD), WAKE_ONLY
     (no window — tap only, the chunk is dropped before VAD) or FULL (window
-    open — tap + VAD). Leaving FULL resets the segmenter, so audio the gate
-    dropped never resurfaces as half a segment. Without a gate the engine
-    ingests everything (pre-M6 behavior — tests, injected engines).
+    open — tap + VAD). Entering DROP resets the segmenter, so audio the
+    playback wall dropped never resurfaces as half a segment. Leaving FULL
+    into WAKE_ONLY with an utterance in flight starts a drain-to-flush: the
+    VAD stays fed until that utterance resolves at its end-silence, so a
+    sentence spoken past the ordinary 3 s window timeout arrives
+    late-but-complete instead of being silently lost (review fix). Without a
+    gate the engine ingests everything (pre-M6 behavior — tests, injected
+    engines).
     """
 
     def __init__(
@@ -205,6 +221,7 @@ class AudioEngine:
         self._chunk_tap = chunk_tap
         self._ingest_gate = ingest_gate
         self._gate_mode = IngestMode.FULL  # the mode the segmenter last fed under
+        self._draining = False  # window closed mid-utterance: feed VAD until it flushes
         self._muted = False
         self._alive = False
         self._thread = threading.Thread(target=self._loop, name="audio", daemon=True)
@@ -233,11 +250,23 @@ class AudioEngine:
                 else IngestMode.FULL
             )
             if mode is not self._gate_mode:
-                if self._gate_mode is IngestMode.FULL:
-                    # Crossing the gate discards in-flight VAD speech: audio the
-                    # gate dropped must never resurface as half a segment later.
+                if mode is IngestMode.DROP:
+                    # Entering the playback wall discards the in-flight
+                    # utterance: audio the wall dropped must never resurface
+                    # as half a segment later (pre-gate parity — such a
+                    # segment would have been emitted mid-playback and
+                    # dropped untranscribed by the loop).
                     self._segmenter.reset()
+                    self._draining = False
+                elif self._gate_mode is IngestMode.FULL and self._segmenter.in_flight:
+                    # The ordinary window timeout closed the gate mid-utterance
+                    # (a continuous sentence never hits the 0.7 s end-silence,
+                    # so nothing has been fed): drain-to-flush instead of
+                    # discarding — the sentence must arrive late-but-complete.
+                    self._draining = True
                 self._gate_mode = mode
+            if mode is IngestMode.WAKE_ONLY and self._draining:
+                mode = IngestMode.FULL  # drain: keep the VAD fed until the flush
             if mode is IngestMode.DROP:
                 continue  # hard half-duplex: no tap (no wake scoring), no VAD
             self._tap_chunk(chunk)
@@ -245,6 +274,8 @@ class AudioEngine:
                 continue  # media guard: dropped BEFORE VAD
             for segment in self._segmenter.feed(chunk):
                 self._bus.emit_threadsafe(segment)
+            if self._draining and not self._segmenter.in_flight:
+                self._draining = False  # flushed (or below min_speech): guard resumes
 
     def _tap_chunk(self, chunk: np.ndarray) -> None:
         if self._chunk_tap is None:

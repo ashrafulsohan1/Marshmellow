@@ -13,7 +13,11 @@ AudioEngine(ingest_gate) → VAD → bus → VoiceLoop → STT → TaskManager),
 every stage counted so the evidence table's numbers are measured, not
 asserted. The negative proofs are structural: the scripted VAD flags every
 chunk that REACHES it as speech, so any gate leak would surface as a
-segment — zero feeds means zero ingestion, not content luck.
+segment — zero feeds means zero ingestion, not content luck. A fourth
+fixture pins the window-timeout boundary (review fix): the ordinary 3 s
+close mid-utterance must DRAIN the in-flight sentence to its flush (late
+but complete, the implicit open collects it), never discard it — while the
+playback (DROP) wall keeps its no-stitch reset.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ from marshmellow.core.bus import EventBus
 from marshmellow.core.config import Settings
 from marshmellow.core.contracts import (
     HotkeyPressed,
+    InstructionReady,
     SpeakingStarted,
     SpeakingStopped,
     SpeechSegment,
@@ -106,6 +111,37 @@ class CountingSource:
         return chunk
 
 
+class _MidStreamGateSource:
+    """A chunk list with a mid-stream gate: blocks before chunk `gate_at`
+    until `release()`, so a test can flip the window state between batches
+    deterministically (the stand-in for the 3 s close landing mid-utterance)."""
+
+    def __init__(self, chunks: list[np.ndarray], gate_at: int) -> None:
+        self.total = len(chunks)
+        self._chunks = chunks
+        self._gate_at = gate_at
+        self._gate = threading.Event()
+        self.armed = threading.Event()
+        self.yielded = 0
+
+    def release(self) -> None:
+        self._gate.set()
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        return self
+
+    def __next__(self) -> np.ndarray:
+        if self.yielded == 0:
+            assert self.armed.wait(timeout=10.0), "source never armed"
+        if self.yielded == self._gate_at:
+            assert self._gate.wait(timeout=10.0), "source never released"
+        if self.yielded >= self.total:
+            raise StopIteration
+        chunk = self._chunks[self.yielded]
+        self.yielded += 1
+        return chunk
+
+
 def _music_chunks() -> list[np.ndarray]:
     """Music-shaped audio: an A-major chord (220/277/330 Hz) with a 2 Hz
     tremolo — tonal, continuous, the shape a media player emits. 2.0 s @ 16 kHz."""
@@ -130,6 +166,38 @@ class ScriptedWakeScorer:
     def predict(self, frame: np.ndarray) -> dict[str, float]:
         self.frames += 1
         return {"media_music": 0.0}
+
+
+class _ContentVAD:
+    """Content-scripted VAD with a feed counter: a nonzero chunk is speech,
+    zeros are end-silence — segment boundaries are determined by content alone."""
+
+    def __init__(self) -> None:
+        self.feeds = 0
+
+    def __call__(self, chunk: np.ndarray) -> float:
+        self.feeds += 1
+        return 1.0 if int(np.abs(chunk).max()) > 0 else 0.0
+
+
+def _run_gate_stream(
+    bus: EventBus, stream: Callable[[], Iterator[np.ndarray]], gate: IngestGate
+) -> _ContentVAD:
+    """Drive a finite gated stream through a real AudioEngine TO COMPLETION:
+    `engine.stop()` alone races the capture thread's alive check and can kill
+    it mid-stream, so the stop waits for the source to drain first."""
+    vad = _ContentVAD()
+    done = threading.Event()
+
+    def wrapped() -> Iterator[np.ndarray]:
+        yield from stream()
+        done.set()
+
+    engine = AudioEngine(bus=bus, chunk_source=wrapped(), vad=vad, ingest_gate=gate)
+    engine.start()
+    assert done.wait(timeout=5.0), "the capture thread never drained the source"
+    engine.stop()
+    return vad
 
 
 # -- the end-to-end capture harness ----------------------------------------------
@@ -171,6 +239,7 @@ class _CaptureHarness:
         *,
         vad: ScriptedVAD | None = None,
         with_wake_queue: bool = False,
+        source: CountingSource | _MidStreamGateSource | None = None,
     ) -> None:
         self.pack = RecordingPack()
         self.stt = CountingSTT()
@@ -183,7 +252,7 @@ class _CaptureHarness:
             stt=self.stt,
         )
         self.app.mascot = FakeMascot()  # type: ignore[assignment]
-        self.source = CountingSource(chunks)
+        self.source = source if source is not None else CountingSource(chunks)
         self.tapped = 0
         self.segments: list[SpeechSegment] = []
         self.wake_events: list[WakeDetected] = []
@@ -397,6 +466,59 @@ async def test_hotkey_during_playback_kills_tts_and_opens_the_window(
         app.stop()
 
 
+# -- (iv) window timeout mid-utterance: the drain, end-to-end (review fix) --------
+
+
+@pytest.mark.scenario
+async def test_window_timeout_mid_utterance_still_dispatches_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """System-level regression (review fix): the receiving window's 3 s close
+    lands mid-utterance — a continuously spoken sentence never feeds a
+    segment, so nothing re-arms the timer and the close is SILENT. The
+    in-flight utterance must still flush (drain), transcribe, implicitly
+    reopen the window and dispatch as ONE instruction — the late-but-complete
+    pre-gate behavior, not a silently lost sentence."""
+    text = b"open calc"
+    # 32 speech chunks; each int16 sample is two ASCII spaces (0x20 0x20) so the
+    # flushed pcm decodes back to clean text; the first chunk carries the words.
+    first = text + b" " * (CHUNK_SAMPLES * 2 - len(text))
+    spacer = b" " * (CHUNK_SAMPLES * 2)
+    speech = [
+        np.frombuffer(first if i == 0 else spacer, dtype=np.int16).copy()
+        for i in range(32)
+    ]
+    # "silence" for the VAD double, but still clean ASCII: the flushed segment
+    # carries these chunks as trailing padding that strips away.
+    silence = [np.full(CHUNK_SAMPLES, 0x2020, dtype=np.int16) for _ in range(30)]
+    src = _MidStreamGateSource(speech + silence, gate_at=16)
+    h = _CaptureHarness(
+        tmp_path, speech + silence, vad=ScriptedVAD(speech_chunks=32), source=src
+    )
+    instructions: list[InstructionReady] = []
+    h.app.bus.subscribe(InstructionReady, instructions.append)
+    h.app.start()
+    try:
+        h.app.bus.emit(WakeDetected(score=0.9))  # window opens → gate FULL
+        src.armed.set()
+        await _wait_for(lambda: src.yielded >= 16)  # half the utterance ingested
+        assert h.app.voice._window.is_open
+        h.app.voice._window.close()  # the 3 s timeout's effect: empty close → DORMANT
+        assert not h.app.voice._window.is_open, "the close landed mid-utterance"
+        src.release()  # the rest of the utterance + end-silence flows through the drain
+        await _wait_for(lambda: h.stt.calls >= 1, timeout=8.0)
+        await _wait_for(lambda: h.pack.calls == ["calc"], timeout=8.0)
+        assert len(instructions) == 1, "ONE instruction — the late-flushed utterance"
+        assert instructions[0].text.strip() == "open calc", (
+            "the whole utterance arrived late-but-complete"
+        )
+        assert h.vad.feeds == 16 + 16 + 22, (
+            "the drain fed the back half + end-silence, then the media guard resumed"
+        )
+    finally:
+        h.stop()
+
+
 # -- unit: the gate policy and the engine hook ------------------------------------
 
 
@@ -448,12 +570,14 @@ def test_engine_gate_modes_drop_tap_only_and_full() -> None:
         bus.stop()
 
 
-def test_gate_transition_resets_in_flight_speech() -> None:
-    """Speech buffered under FULL must never resurface after the gate drops
-    the middle: partial audio from a closed window is discarded at the
-    transition, so re-opening cannot emit a segment stitched across the gap.
-    The window flips run INSIDE the source generator — on the capture thread,
-    between chunk pulls — so the boundaries are deterministic, not timed."""
+def test_playback_gap_never_stitches_a_segment() -> None:
+    """The no-stitch guarantee holds across a PLAYBACK gap (the reset's actual
+    intent): speech buffered under FULL, then the speaking probe flips on
+    (DROP — the wall resets the utterance), then off again with a silence
+    tail → nothing may flush. The flips run INSIDE the source generator — on
+    the capture thread, between chunk pulls — so the boundaries are
+    deterministic, not timed. (The window-timeout path is the opposite: see
+    the drain test below — review fix.)"""
     bus = EventBus()
     got: list[SpeechSegment] = []
     bus.subscribe(SpeechSegment, got.append)
@@ -461,19 +585,75 @@ def test_gate_transition_resets_in_flight_speech() -> None:
     speech = [np.full(CHUNK_SAMPLES, 1000, dtype=np.int16) for _ in range(10)]
     gap = [np.zeros(CHUNK_SAMPLES, dtype=np.int16) for _ in range(5)]
     tail = [np.zeros(CHUNK_SAMPLES, dtype=np.int16) for _ in range(30)]
-    window_open = [True]
+    speaking = [False]
 
     def stream() -> Iterator[np.ndarray]:
         yield from speech  # FULL: buffered, unflushed (no end-silence yet)
-        window_open[0] = False  # → WAKE_ONLY: the gap goes tap-only, VAD never sees it
+        speaking[0] = True  # → DROP: the playback wall resets the utterance
         yield from gap
-        window_open[0] = True  # → FULL again: the stale buffer must have been reset
+        speaking[0] = False  # window still open → FULL: nothing stale may flush
         yield from tail  # 30 silences: with the reset, nothing can flush
 
-    gate = IngestGate(speaking=lambda: False, window_open=lambda: window_open[0])
-    vad = lambda c: 1.0 if int(np.abs(c).max()) > 0 else 0.0  # noqa: E731 — content-scripted
-    engine = AudioEngine(bus=bus, chunk_source=stream(), vad=vad, ingest_gate=gate)
-    engine.start()
-    engine.stop()  # finite source: the thread drains and exits
+    gate = IngestGate(speaking=lambda: speaking[0], window_open=lambda: True)
+    _run_gate_stream(bus, stream, gate)
     bus.stop()
-    assert got == [], "no segment may be stitched across a gate transition"
+    assert got == [], "no segment may be stitched across a playback gap"
+
+
+def test_window_close_mid_utterance_drains_to_flush() -> None:
+    """REVIEW-FIX REGRESSION: the ordinary 3 s window timeout closes the
+    window mid-utterance — a continuously spoken sentence never hits the
+    0.7 s end-silence, so nothing has been fed and the close is silent. The
+    committed gate reset the buffer there and dropped every remaining chunk
+    before VAD: the whole sentence was lost (200 speech + 30 silence chunks →
+    0 segments, vs 1 segment pre-gate). The drain keeps the VAD fed until the
+    utterance flushes: the same stream now yields ONE segment carrying the
+    whole utterance — measured on the reviewer's exact repro shape."""
+    bus = EventBus()
+    got: list[SpeechSegment] = []
+    bus.subscribe(SpeechSegment, got.append)
+
+    speech = [np.full(CHUNK_SAMPLES, 1000, dtype=np.int16) for _ in range(200)]
+    tail = [np.zeros(CHUNK_SAMPLES, dtype=np.int16) for _ in range(30)]
+    window_open = [True]
+
+    def stream() -> Iterator[np.ndarray]:
+        yield from speech  # FULL: buffered, unflushed — the deadline hits mid-speech
+        window_open[0] = False  # the 3 s close: gate → WAKE_ONLY
+        yield from tail  # end-silence must still reach the VAD for the flush
+
+    gate = IngestGate(speaking=lambda: False, window_open=lambda: window_open[0])
+    vad = _run_gate_stream(bus, stream, gate)
+    bus.stop()
+    assert len(got) == 1, "the in-flight utterance must flush exactly once"
+    assert len(got[0].pcm) == (200 + 22) * CHUNK_SAMPLES * 2, (
+        "the flushed segment carries the whole utterance + its end-silence"
+    )
+    assert vad.feeds == 200 + 22, "the drain fed until the flush, then stopped"
+
+
+def test_drain_ends_when_the_utterance_resolves() -> None:
+    """The drain is bounded by the utterance, not by a timer: a close with
+    only a sub-minimum blip in flight drains until that blip resolves at
+    end-silence (below min_speech → discarded, no segment), then the media
+    guard resumes — later WAKE_ONLY chunks are dropped before VAD again."""
+    bus = EventBus()
+    got: list[SpeechSegment] = []
+    bus.subscribe(SpeechSegment, got.append)
+
+    blip = [np.full(CHUNK_SAMPLES, 1000, dtype=np.int16)]
+    tail = [np.zeros(CHUNK_SAMPLES, dtype=np.int16) for _ in range(30)]
+    after = [np.full(CHUNK_SAMPLES, 1000, dtype=np.int16)]
+    window_open = [True]
+
+    def stream() -> Iterator[np.ndarray]:
+        yield from blip  # FULL: one 32 ms speech chunk — below min_speech (8)
+        window_open[0] = False  # the close: drain starts (an utterance is open)
+        yield from tail  # ≥22 end-silences: the blip resolves, the drain ends
+        yield from after  # WAKE_ONLY again: must be dropped before VAD
+
+    gate = IngestGate(speaking=lambda: False, window_open=lambda: window_open[0])
+    vad = _run_gate_stream(bus, stream, gate)
+    bus.stop()
+    assert got == [], "a sub-minimum blip never becomes a segment"
+    assert vad.feeds == 1 + 22, "the drain fed exactly until the blip resolved"
