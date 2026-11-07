@@ -40,6 +40,7 @@ from marshmellow.core.config import Settings  # noqa: E402
 from marshmellow.core.contracts import ActionResult, PerceptionSnapshot  # noqa: E402
 from marshmellow.planner.fake import FakePlanner  # noqa: E402
 from marshmellow.stt.fake import FakeSTT  # noqa: E402
+from marshmellow.tts.piper import default_voice_model  # noqa: E402
 from marshmellow.ui.mascot import MascotStateEvent  # noqa: E402
 from marshmellow.ui.tray import MascotIconProvider, Tray, TrayAction  # noqa: E402
 
@@ -321,6 +322,17 @@ def test_quit_via_tray_action_leaves_no_processes(qapp: QApplication, tmp_path: 
     → within the injected shutdown budget zero marshmellow/piper_worker
     processes remain. On a machine with a piper voice the app really owns the
     GPL-isolated worker subprocess — quit must terminate it (no zombie)."""
+    # The census needs a worker to census. Model binaries stay out of git
+    # (`voices/` is gitignored — M5 Task 7), so a clean checkout has no voice:
+    # the composition root degrades to FakeTTS and spawns no subprocess. That
+    # is the same dev-gated tier as the wake-model/SP2 fixture skips — the
+    # census keeps its full strength wherever a voice exists (dev tree, CI
+    # with voices, the frozen bundle ships one).
+    if default_voice_model(Settings(activation="hotkey").tts_voice) is None:
+        pytest.skip(
+            "no piper voice on this machine — the app spawns no worker to "
+            "census (the quit path itself stays covered by the headless quit tests)"
+        )
     started = time.time()
     app = _gui_app(tmp_path)
     app.start()
@@ -328,8 +340,8 @@ def test_quit_via_tray_action_leaves_no_processes(qapp: QApplication, tmp_path: 
     try:
         # The TTS subprocess (dev: python -m marshmellow.tts.piper_worker) is
         # spawned by start(); wait for it so the census proves teardown, not a
-        # spawn race. Voiceless machines spawn nothing — the census still
-        # guards the full quit path.
+        # spawn race. (A voice was verified above; if the worker still never
+        # appears, the TTS build changed — fail loudly.)
         assert _wait_until(
             lambda: bool(_marshmellow_processes(started)), timeout_s=20.0
         ), "the app spawned no piper worker to census — TTS build changed?"

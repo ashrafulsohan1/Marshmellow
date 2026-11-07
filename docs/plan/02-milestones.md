@@ -279,8 +279,47 @@ launch/pin phase before any Marshmellow code runs, and the same suite was green 
 M6-T4 (`563dfbf`). The clock fixture flaked in one run and passed in re-runs (real-app
 launch timing). Both are `@pytest.mark.manual` real-desktop tests — the default suite
 deselects them; re-run in Task 7's verification pass.
-**The full M6 DoD evidence block lands with Task 7** (bundle rebuild + in-workflow
-verification pass); the user-physical entries remain open until the feel session runs.
+**Task 7 evidence (2026-11-08, bundle rebuilt + verified):** the four feedback flaws are fixed
+and gated (T1–T6 above); the bundle was rebuilt from HEAD `864e462` and verified in-workflow
+(0 product-code fixes needed; 1 clean-checkout test fix, round 1 of ≤ 2):
+
+- **Gates** (un-piped `&&` chain, pre-build): `uv run pytest -q` → **559 passed, 3 skipped,
+  17 deselected in 142.29s** · `ruff check .` → clean · `mypy` → clean (43 files) — exit 0.
+  Post-fix re-run: pytest exit 0 again (559/3/17, 244.04s), ruff/mypy exit 0.
+- **Build** (release-checklist skill): `uv run python installer/fetch_bundle_inputs.py` → all
+  inputs present; `uv run pyinstaller installer/marshmellow.spec --noconfirm` → **exit 0**
+  (6 benign warnings: optional hidden imports + the ctypes-declared UIA COM DLLs that load from
+  the Windows system dir). One-dir two-exe layout: `dist/Marshmellow/Marshmellow.exe`
+  (28,055,535 B) + `piper_worker.exe` (5,347,608 B) in the dist root; `_internal/` carries
+  `mascot/` (all 10 identity files incl. the exe ico), `wake/` (D8 model + extractors),
+  `voices/` (lessac pair), `models/faster-whisper-base/` (ct2), silero VAD onnx, and
+  `piper/espeak-ng-data` (19 MB) — 718 MB total; `dist/`/`build/` gitignored.
+- **Smoke:** `dist\Marshmellow\Marshmellow.exe --smoke` → **`smoke ok`, exit 0**.
+- **Verification pass:** [RELEASE-AUDIT-m6.md](RELEASE-AUDIT-m6.md) — fresh adversarial audit of
+  the M6 delta + bundle: **0 new high findings**; S6 closed (fix re-verified); L9r closed
+  (bundle layout inspected — every prior round was spec-read-only); carry-over mediums
+  (S3/S4/S5/P1/A1) unchanged; privacy re-check green (no new verbatim-log sites, egress census
+  unchanged, secret scans clean). One HIGH found and fixed within the bounded budget: the quit
+  census failed in a clean checkout (no `voices/` → no worker to census) → skip with a
+  documented reason where no voice exists (test-only, same dev-gated tier as the wake-model/SP2
+  skips; census still runs where a voice exists). [CLEANROOM-VERIFY-m6.md](CLEANROOM-VERIFY-m6.md)
+  — round 0 FAIL (that census) → fix → **round 2 PASS: clone at `864e462` + the fix diff,
+  `uv sync` 0, pytest 556 passed / 6 skipped / 17 deselected (exit 0), ruff 0, mypy 0**, clone
+  removed after.
+- **Scenario re-run** (Task 6's ask): `uv run pytest -m scenario` → exit 0: **45 passed,
+  8 skipped** — the 8 are the live-use guard itself (`-rs`: "user active (last input 0s ago) —
+  real-app scenarios deferred"); the 10 scripted fixture scenarios passed. The two
+  `@pytest.mark.manual` real-desktop tests from the Task 6 note were NOT re-run — the user was
+  active (input idle 0 s), the same guard defers them; the browser one remains environmentally
+  broken on this machine (Task 6 probe).
+- **Not run — startup/memory bench** (release-checklist §4): the user was active at run time
+  and the bench boots the real GUI on their desktop (mascot + tray) — deferred with the
+  live-use guard as the reason; M5's numbers stay the recorded baseline. **Not run — dogfood
+  day** (§6): user-physical by design.
+- **STOP — no publish, no version bump** (§2 of the feedback brief): the candidate sits in
+  `dist/` (untracked); the publish/version call is the user's. The user-physical feel checklist
+  (art approval, drag/restart feel, 3 s close feel, media-guard feel, tray look +
+  stop-from-tray) remains open in [pending-user-verifications.md](pending-user-verifications.md).
 
 ## Testing strategy (applies from M1 onward)
 
