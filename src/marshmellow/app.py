@@ -51,7 +51,7 @@ from marshmellow.audio.loop import Transcriber, VoiceLoop
 from marshmellow.core import secrets
 from marshmellow.core.assets import default_wake_model_dir, default_wake_model_path
 from marshmellow.core.bus import EventBus
-from marshmellow.core.config import LLMProviderConfig, Settings
+from marshmellow.core.config import LLMProviderConfig, Settings, product_config_path
 from marshmellow.core.contracts import (
     ActionRequest,
     ActionResult,
@@ -82,6 +82,8 @@ from marshmellow.tts.fake import FakeTTS
 from marshmellow.ui.tray import GuiMarshaledConfirm, TrayAction
 
 if TYPE_CHECKING:
+    from PySide6.QtCore import QPoint
+
     from marshmellow.safety.confirm import ConfirmFlow
     from marshmellow.tasks.foreground import ForegroundLease
     from marshmellow.tts.piper import PiperSpeaker
@@ -217,7 +219,13 @@ class App:
             from marshmellow.ui.mascot import Mascot
             from marshmellow.ui.tray import Tray
 
-            self.mascot = Mascot(bus=self.bus)
+            # Bottom-right default; a persisted [ui] mascot_x/mascot_y restores
+            # (clamped into a visible screen), and drag ends persist (M6-T2).
+            self.mascot = Mascot(
+                bus=self.bus,
+                initial_pos=self._mascot_initial_pos(),
+                on_position_changed=self._on_mascot_moved,
+            )
             self.tray = Tray(bus=self.bus)
             # The bus dispatches this handler on its drain thread; GuiMarshal
             # hops the request to the GUI thread before any widget is touched.
@@ -358,6 +366,31 @@ class App:
 
         dialog = SettingsDialog(self.settings, apply_autostart=autostart.set_autostart)
         dialog.exec()
+
+    # -- mascot placement (M6-T2) ------------------------------------------------------
+
+    def _mascot_initial_pos(self) -> QPoint | None:
+        """The persisted mascot top-left ([ui] mascot_x/mascot_y, §3.11) or
+        None when unset — the widget then takes its bottom-right default.
+        QPoint is built here, not at module import: app.py stays importable
+        without PySide6 (headless entries, tests)."""
+        from PySide6.QtCore import QPoint
+
+        ui = self.settings.ui
+        if ui.mascot_x is None or ui.mascot_y is None:
+            return None
+        return QPoint(ui.mascot_x, ui.mascot_y)
+
+    def _on_mascot_moved(self, x: int, y: int) -> None:
+        """Drag end (GUI thread, via Mascot's on_position_changed): persist the
+        mascot position to config.toml. The widget has already clamped the
+        position into a visible screen."""
+        self.settings.ui.mascot_x = x
+        self.settings.ui.mascot_y = y
+        try:
+            self.settings.save(product_config_path())
+        except OSError:
+            logger.warning("Could not persist the mascot position", exc_info=True)
 
     def _build_stt(self) -> Transcriber:
         """Real faster-whisper for live runs; the fake keeps headless runs silent-fast.

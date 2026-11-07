@@ -47,6 +47,11 @@ class SafetyConfig(BaseModel):
 
 class UIConfig(BaseModel):
     mascot_scale: float = 1.0
+    # Persisted mascot top-left (M6-T2): App saves it on drag end; None (the
+    # default, omitted from the TOML via exclude_none) = the widget's
+    # bottom-right default. Restored at construction, clamped on-screen.
+    mascot_x: int | None = None
+    mascot_y: int | None = None
     theme: Literal["dark", "light"] = "dark"
 
 

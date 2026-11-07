@@ -39,12 +39,15 @@ def test_mascot_accepts_all_states(qapp: QApplication) -> None:
         assert m.state == state
 
 
-def test_mascot_idle_is_click_through(qapp: QApplication) -> None:
+def test_mascot_idle_is_body_masked_not_transparent_for_input(qapp: QApplication) -> None:
+    """M6-T2 input model: the marshmallow body ellipse is the window's input
+    mask — the surroundings pass through in EVERY state (§3.10 never-blocks
+    promise) and the whole-rect WindowTransparentForInput flag is gone."""
     m = Mascot()  # never shown: windowFlags() is the source of truth, not windowHandle()
     m.set_state("idle")
-    assert bool(m.windowFlags() & Qt.WindowType.WindowTransparentForInput)
-    m.set_state("listening")
     assert not bool(m.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+    assert not m.mask().isEmpty()
+    assert m.mask().contains(m.rect().center())
 
 
 def test_mascot_attention_state_is_the_foreground_lease_ask(qapp: QApplication) -> None:
