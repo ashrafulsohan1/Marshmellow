@@ -71,8 +71,11 @@ UNRECOGNIZED_ACK = "Sorry, I didn't catch that."
 # execute after the kill. mute/unmute/wake don't touch the instruction stream.
 _ABORT_INTENTS: Final[frozenset[str]] = frozenset({"stop", "cancel", "kill_all", "sleep"})
 
-# The loop's close-check tick fires this far past the window's deadline; the
-# window's injected clock, not the timer, decides whether closing is due.
+# The loop's close-check tick fires this far past the window's REMAINING time
+# (deadline − clock, not a full window): a tick that fires early because speech
+# moved the deadline re-arms by exactly what is left, so the close lands one
+# margin past the deadline however the arm/feed timing falls out. The window's
+# injected clock, not the timer, decides whether closing is due.
 _CLOSE_MARGIN_S: Final[float] = 0.05
 
 
@@ -275,9 +278,11 @@ class VoiceLoop:
         def _arm() -> None:
             if self._close_handle is not None or not self._window.is_open:
                 return
-            self._close_handle = loop.call_later(
-                self._window.close_after_s + _CLOSE_MARGIN_S, self._on_close_check
-            )
+            remaining = self._window.seconds_until_close()
+            if remaining is None:  # closed between the two checks
+                return
+            delay = max(remaining, 0.0) + _CLOSE_MARGIN_S  # just past the deadline
+            self._close_handle = loop.call_later(delay, self._on_close_check)
 
         try:
             loop.call_soon_threadsafe(_arm)

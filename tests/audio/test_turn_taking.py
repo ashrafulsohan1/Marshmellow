@@ -20,6 +20,8 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+import pytest
+
 from marshmellow.app import App
 from marshmellow.audio.loop import VoiceLoop
 from marshmellow.audio.turn_taking import ReceivingWindow, WindowState
@@ -28,6 +30,7 @@ from marshmellow.core.config import Settings
 from marshmellow.core.contracts import (
     InstructionReady,
     SpeechSegment,
+    Transcript,
     WakeDetected,
 )
 from marshmellow.packs.base import ShellResult
@@ -185,6 +188,26 @@ def test_empty_text_is_not_voice_activity() -> None:
     h.stop()
 
 
+def test_seconds_until_close_tracks_the_deadline() -> None:
+    """The seam the loop's close tick arms from: remaining time, not a full window."""
+    h = _Harness()
+    w = h.window
+    assert w.seconds_until_close() is None, "DORMANT: nothing to count down"
+
+    w.open()
+    assert w.seconds_until_close() == pytest.approx(3.0)
+    h.clock.advance(1.0)
+    assert w.seconds_until_close() == pytest.approx(2.0)
+    w.feed_speech("open calc")  # voice activity resets the deadline
+    assert w.seconds_until_close() == pytest.approx(3.0)
+    h.clock.advance(3.0)  # exactly the deadline
+    assert w.seconds_until_close() == pytest.approx(0.0)
+
+    w.maybe_close()  # → EXECUTING
+    assert w.seconds_until_close() is None
+    h.stop()
+
+
 def test_cancel_discards_a_pending_instruction() -> None:
     h = _Harness()
     w = h.window
@@ -250,6 +273,17 @@ def _segment(text: str) -> SpeechSegment:
     return SpeechSegment(pcm=text.encode("utf-8"), started_at=now, ended_at=now)
 
 
+class SlowSTT:
+    """Transcriber that sleeps on the worker thread — feeds land long after the wake arm."""
+
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+
+    def transcribe(self, segment: SpeechSegment) -> Transcript:
+        time.sleep(self.delay)
+        return Transcript(text=segment.pcm.decode("utf-8", errors="ignore"), source="fixture")
+
+
 def _app(tmp_path: object, pack: RecordingPack) -> App:
     app = App(
         settings=Settings(),
@@ -282,7 +316,7 @@ async def test_wake_then_two_segments_submit_one_joined_instruction(tmp_path) ->
         app.bus.emit(_segment("open notepad"))
         app.bus.emit(_segment("and open calc"))
 
-        await _wait_for(lambda: pack.calls == ["notepad and open calc"])
+        await _wait_for(lambda: pack.calls == ["notepad and open calc"], timeout=8.0)
         assert pack.calls == ["notepad and open calc"], "one dispatch, joined text"
     finally:
         app.stop()
@@ -298,8 +332,42 @@ async def test_wake_while_executing_starts_a_new_window(tmp_path) -> None:
 
         app.bus.emit(WakeDetected(score=0.9))  # wake mid-execution: never swallowed
         app.bus.emit(_segment("open calc"))
-        await _wait_for(lambda: pack.calls == ["notepad", "calc"])
+        await _wait_for(lambda: pack.calls == ["notepad", "calc"], timeout=8.0)
         assert pack.calls == ["notepad", "calc"]
+    finally:
+        app.stop()
+
+
+async def test_close_lands_one_margin_past_the_deadline_despite_late_feeds(tmp_path) -> None:
+    """Regression (M6 T3 review): the tick re-arms from the REMAINING time, never a full window.
+
+    Wake arms the tick at t0 (1.05 s out); the feed lands 0.5 s later (real-STT
+    latency), moving the deadline to t0+1.5. A full-window re-arm dispatches at
+    ~t0+2.1; remaining-based re-arming dispatches at ~t0+1.55 — one margin past
+    the deadline however the arm/feed timing falls out.
+    """
+    pack = RecordingPack()
+    app = App(
+        settings=Settings(),
+        headless=True,
+        log_dir=tmp_path,  # type: ignore[arg-type]
+        pack=pack,
+        audio_engine=FakeAudioEngine(),  # type: ignore[arg-type]
+        stt=SlowSTT(delay=0.5),
+    )
+    app.mascot = FakeMascot()  # type: ignore[assignment]
+    app.voice._window = ReceivingWindow(app.bus, datetime.now, close_after_s=1.0)
+    app.start()
+    try:
+        began = time.monotonic()
+        app.bus.emit(WakeDetected(score=0.9))
+        app.bus.emit(_segment("open notepad"))
+        await _wait_for(lambda: pack.calls == ["notepad"], timeout=8.0)
+        dispatch_at = time.monotonic() - began
+        assert dispatch_at < 1.85, (
+            f"dispatch took {dispatch_at:.2f}s — the close tick must re-arm from the "
+            "window's remaining time (a full-window re-arm lands ~2.1s)"
+        )
     finally:
         app.stop()
 

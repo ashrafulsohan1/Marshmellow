@@ -108,6 +108,19 @@ class ReceivingWindow:
                 return False
         return self.close()
 
+    def seconds_until_close(self) -> float | None:
+        """Remaining seconds to the close deadline; None when not OPEN.
+
+        The owner arms its next clock-guarded tick from this value (plus its
+        own margin) instead of a full window, so a tick that fires early —
+        speech moved the deadline after the arm — re-arms by exactly what is
+        left and the close still lands one margin past the deadline.
+        """
+        with self._lock:
+            if self._state is not WindowState.OPEN or self._deadline is None:
+                return None
+            return (self._deadline - self._clock()).total_seconds()
+
     def close(self) -> bool:
         """Join the accumulated text into ONE ``InstructionReady``; silent when empty."""
         joined = ""
