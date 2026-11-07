@@ -306,6 +306,12 @@ and gated (T1–T6 above); the bundle was rebuilt from HEAD `864e462` and verifi
   — round 0 FAIL (that census) → fix → **round 2 PASS: clone at `864e462` + the fix diff,
   `uv sync` 0, pytest 556 passed / 6 skipped / 17 deselected (exit 0), ruff 0, mypy 0**, clone
   removed after.
+- **Round complete (2026-11-08):** the verification reports are committed; the final reviewer fix
+  (`41a94ce` — window-timeout drains to flush instead of eating the sentence tail) is covered by
+  the cleanroom's fix-diff scope; final gate at HEAD: **562 passed / 3 skipped / 17 deselected,
+  ruff clean, mypy clean (43 files)**; `origin/main` synced through `41a94ce`. **Publish and
+  version-bump deliberately reserved** — the rebuilt bundle sits in `dist/` (smoke ok) awaiting
+  the user's v0.1.1 call; the M6 feel checklist is live in `pending-user-verifications.md`.
 - **Scenario re-run** (Task 6's ask): `uv run pytest -m scenario` → exit 0: **45 passed,
   8 skipped** — the 8 are the live-use guard itself (`-rs`: "user active (last input 0s ago) —
   real-app scenarios deferred"); the 10 scripted fixture scenarios passed. The two
