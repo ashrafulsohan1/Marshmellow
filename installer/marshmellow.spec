@@ -15,6 +15,9 @@ committed; see .gitignore):
 - ``assets/wake``                     → ``_internal/wake`` (D8 self-trained model,
   Apache-2.0 feature extractors — license check recorded in assets/wake/README.md,
   so the wake path SHIPS; a hotkey-only bundle would drop this directory)
+- ``assets/mascot``                   → ``_internal/mascot`` (M6-T5 identity stills —
+  the tray/window icons load them via ``core/assets.py::asset_dir`` — plus the
+  ``marshmellow.ico`` that stamps the main exe below)
 - ``voices/<voice>.onnx(+.json)``     → ``_internal/voices`` (piper voice)
 - ``models/faster-whisper-base``      → ``_internal/models/faster-whisper-base``
   (ct2 — a clean account installs offline-capable except the BYOK call)
@@ -34,6 +37,7 @@ ROOT = Path(SPECPATH).resolve().parent  # installer/ → the repo root
 VOICE = "en_US-lessac-medium"  # M0-SP7 default (config.tts_voice); must match fetch_bundle_inputs
 VOICES = ROOT / "voices"
 STT_DIR = ROOT / "models" / "faster-whisper-base"
+MASCOT_DIR = ROOT / "assets" / "mascot"  # M6-T5 identity (still pngs + the exe icon)
 
 
 def _require(label: str, paths: list[Path]) -> None:
@@ -50,10 +54,14 @@ _voice_onnx = VOICES / f"{VOICE}.onnx"
 _voice_json = VOICES / f"{VOICE}.onnx.json"
 _require("piper voice", [_voice_onnx, _voice_json])
 _require("faster-whisper ct2 model", [STT_DIR / "model.bin"])
+_require("mascot identity assets", [MASCOT_DIR / "marshmellow.ico", MASCOT_DIR / "idle.png"])
 
 datas = [
     # D8: the self-trained wake model ships (assets/wake/README.md license check)
     (str(ROOT / "assets" / "wake"), "wake"),
+    # M6-T5: the identity stills the tray/window icons load at runtime
+    # (ui/tray.py::MascotIconProvider → asset_dir()/mascot = _internal/mascot)
+    (str(MASCOT_DIR), "mascot"),
     (str(_voice_onnx), "voices"),
     (str(_voice_json), "voices"),
     (str(STT_DIR), "models/faster-whisper-base"),
@@ -94,6 +102,8 @@ exe_main = EXE(
     name="Marshmellow",
     console=False,
     exclude_binaries=True,
+    # M6-T5: the app identity — explorer/taskbar/desktop carry the marshmallow
+    icon=str(MASCOT_DIR / "marshmellow.ico"),
 )
 exe_worker = EXE(
     pyz_worker,

@@ -83,6 +83,7 @@ from marshmellow.ui.tray import GuiMarshaledConfirm, TrayAction
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QIcon
 
     from marshmellow.safety.confirm import ConfirmFlow
     from marshmellow.tasks.foreground import ForegroundLease
@@ -214,10 +215,13 @@ class App:
         # the first time the tray's open_ui arrives — never headless.
         self._dashboard: TasksDashboard | None = None
         self._open_ui_marshal: GuiMarshal | None = None
+        self._window_icon: QIcon | None = None  # M6-T5 identity, set in GUI mode
         if not headless:
+            from PySide6.QtWidgets import QApplication
+
             from marshmellow.ui.main_window import GuiMarshal
             from marshmellow.ui.mascot import Mascot
-            from marshmellow.ui.tray import Tray
+            from marshmellow.ui.tray import Tray, app_icon
 
             # Bottom-right default; a persisted [ui] mascot_x/mascot_y restores
             # (clamped into a visible screen), and drag ends persist (M6-T2).
@@ -227,6 +231,12 @@ class App:
                 on_position_changed=self._on_mascot_moved,
             )
             self.tray = Tray(bus=self.bus)
+            # M6-T5 identity: the marshmallow icon app-wide (every window's
+            # taskbar fallback) and on the main window when it is summoned.
+            self._window_icon = app_icon()
+            qapp = QApplication.instance()
+            if qapp is not None:
+                qapp.setWindowIcon(self._window_icon)
             # The bus dispatches this handler on its drain thread; GuiMarshal
             # hops the request to the GUI thread before any widget is touched.
             self._open_ui_marshal = GuiMarshal(self._open_dashboard)
@@ -358,6 +368,8 @@ class App:
             self._dashboard = TasksDashboard(
                 bus=self.bus, tasks=self, open_settings=self._open_settings
             )
+            if self._window_icon is not None:  # M6-T5: the main window carries the identity
+                self._dashboard.setWindowIcon(self._window_icon)
         self._dashboard.show_dashboard()
 
     def _open_settings(self) -> None:

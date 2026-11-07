@@ -65,6 +65,13 @@ class MascotClicked(BaseModel):
     pass
 
 
+class MascotStateEvent(BaseModel):
+    """The mascot changed state (M6-T5): the tray mirrors it in its identity
+    icon (idle/muted/attention must read differently at a glance)."""
+
+    state: MascotState
+
+
 def _animated_states() -> frozenset[str]:
     """States the widget animates with the 30 fps clock. Lazy import: ui.
     mascot_art imports this module's color constants, so the reverse import
@@ -182,6 +189,11 @@ class Mascot(QWidget):
         if state not in _STATE_COLORS:
             raise ValueError(f"unknown mascot state: {state!r}")
         self._state = state  # type: ignore[assignment]
+        if self._bus is not None:
+            # M6-T5: the tray mirrors the state in its icon. This slot runs on
+            # the GUI thread (set_state queues here), but callers live on
+            # engine threads — emit_threadsafe keeps the publish thread-safe.
+            self._bus.emit_threadsafe(MascotStateEvent(state=state))
         self._sync_animation()
         self.update()
 
