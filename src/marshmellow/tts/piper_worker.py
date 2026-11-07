@@ -33,16 +33,19 @@ def main() -> int:
         print(f"voice model not found: {model}", file=sys.stderr)
         return 2
 
-    from piper import PiperVoice
-
-    voice = PiperVoice.load(model)  # config defaults to model path + ".json"
+    voice = None  # M5 T7 tuning lever: loaded on the FIRST utterance, not at spawn —
+    # the resident worker's idle footprint stays small (bench: spikes/data/
+    # m5_startup.json); the first utterance pays the load that boot used to pay.
     out = sys.stdout.buffer
-    header = struct.pack("<I", voice.config.sample_rate & 0xFFFFFFFF)
     for line in sys.stdin:
         text = line.strip()
         if not text:
             continue
-        out.write(header)
+        if voice is None:
+            from piper import PiperVoice
+
+            voice = PiperVoice.load(model)  # config defaults to model path + ".json"
+        out.write(struct.pack("<I", voice.config.sample_rate & 0xFFFFFFFF))
         out.flush()
         for chunk in voice.synthesize(text):
             pcm = chunk.audio_int16_bytes

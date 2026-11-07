@@ -1,0 +1,87 @@
+{
+  "exe": "dist\\Marshmellow\\Marshmellow.exe",
+  "runs": [
+    {
+      "run": 1,
+      "cold_start_s": 5.33,
+      "rss_app_mb": 276.5,
+      "rss_children_mb": 21.0,
+      "rss_sum_mb": 297.5,
+      "child_pids": [
+        8332
+      ]
+    },
+    {
+      "run": 2,
+      "cold_start_s": 2.06,
+      "rss_app_mb": 275.6,
+      "rss_children_mb": 21.1,
+      "rss_sum_mb": 296.7,
+      "child_pids": [
+        8644
+      ]
+    },
+    {
+      "run": 3,
+      "cold_start_s": 1.95,
+      "rss_app_mb": 275.9,
+      "rss_children_mb": 20.3,
+      "rss_sum_mb": 296.2,
+      "child_pids": [
+        15172
+      ]
+    }
+  ],
+  "median_cold_start_s": 2.06,
+  "max_rss_sum_mb": 297.5,
+  "targets": {
+    "cold_start_s_max": 10.0,
+    "idle_rss_sum_mb_max": 400.0
+  },
+  "cold_start_within_target": true,
+  "idle_rss_within_target": true,
+  "tuning": {
+    "pretuning": {
+      "runs": [
+        {
+          "run": 1,
+          "cold_start_s": 4.5,
+          "rss_app_mb": 399.2,
+          "rss_children_mb": 137.6,
+          "rss_sum_mb": 536.8,
+          "child_pids": [
+            13864
+          ]
+        },
+        {
+          "run": 2,
+          "cold_start_s": 2.36,
+          "rss_app_mb": 397.5,
+          "rss_children_mb": 138.4,
+          "rss_sum_mb": 536.0,
+          "child_pids": [
+            11860
+          ]
+        },
+        {
+          "run": 3,
+          "cold_start_s": 2.26,
+          "rss_app_mb": 396.1,
+          "rss_children_mb": 137.9,
+          "rss_sum_mb": 534.1,
+          "child_pids": [
+            19388
+          ]
+        }
+      ],
+      "median_cold_start_s": 2.36,
+      "max_rss_sum_mb": 536.8,
+      "verdict": "idle-RSS MISS (536.8 > 400)"
+    },
+    "levers_applied": [
+      "lazy STT load: FasterWhisperSTT(lazy=True) \u2014 the ct2 session loads on first transcribe (measured ~0.6 s once), not at boot",
+      "deferred voice load: piper_worker loads PiperVoice on the FIRST stdin line, not at spawn"
+    ],
+    "result": "idle RSS 536.8 -> 297.5 MB (-44%), cold start 2.36 -> 2.06 s median \u2014 both targets now PASS; recorded, not silently tuned"
+  }
+}

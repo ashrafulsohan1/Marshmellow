@@ -44,6 +44,35 @@ def test_resamples_non_16k_input(stt: FasterWhisperSTT) -> None:
     assert transcript.text is not None
 
 
+def test_lazy_stt_defers_model_load_to_first_transcribe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M5 T7 tuning lever (idle-RSS): lazy=True must NOT construct the model at
+    __init__ — the load happens exactly once, inside the first transcribe()."""
+    from marshmellow.stt import fasterwhisper as fw_mod
+
+    created: list[str] = []
+
+    class FakeWhisperModel:
+        def __init__(self, model: str, device: str | None = None,
+                     compute_type: str | None = None) -> None:
+            created.append(model)
+
+        def transcribe(self, pcm: object, language: str | None = None,
+                       beam_size: int | None = None) -> tuple[object, None]:
+            return iter([]), None
+
+    monkeypatch.setattr(fw_mod, "WhisperModel", FakeWhisperModel)
+    stt = FasterWhisperSTT(model="fake-model", lazy=True)
+    assert not created, "lazy construction must not load the model"
+
+    stt.transcribe(_segment(_tone(0.1), 16000))
+    assert created == ["fake-model"], "first transcribe loads exactly once"
+
+    stt.transcribe(_segment(_tone(0.1), 16000))
+    assert created == ["fake-model"], "later transcribes reuse the loaded model"
+
+
 def _read_wav_i16(path: Path) -> tuple[np.ndarray, int]:
     with wave.open(str(path), "rb") as w:
         sr, ch, raw = w.getframerate(), w.getnchannels(), w.readframes(w.getnframes())

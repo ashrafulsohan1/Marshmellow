@@ -377,7 +377,9 @@ class App:
             bundled = default_stt_model_dir()
             if bundled is not None:
                 model = str(bundled)
-        return FasterWhisperSTT(model=model)
+        # M5 T7 tuning lever: the ct2 session is the biggest idle-RSS item —
+        # load it on first speech (bench: spikes/data/m5_startup.json).
+        return FasterWhisperSTT(model=model, lazy=True)
 
     def _build_tts(self) -> FakeTTS | PiperSpeaker:
         """Real piper subprocess for live runs; degrade to silent when no voice exists."""

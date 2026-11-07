@@ -55,6 +55,50 @@ def test_default_voice_model_search_order(
     assert default_voice_model("en_US-missing-medium") is None
 
 
+def test_worker_defers_voice_load_to_first_utterance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M5 T7 tuning lever (idle-RSS): the resident worker must NOT load the
+    voice at spawn — PiperVoice.load happens once, on the first stdin line."""
+    import io
+    import types
+
+    import marshmellow.tts.piper_worker as pw
+
+    loads = 0
+
+    class FakeVoice:
+        def __init__(self) -> None:
+            self.config = types.SimpleNamespace(sample_rate=22050)
+
+        @classmethod
+        def load(cls, model: Path) -> "FakeVoice":
+            nonlocal loads
+            loads += 1
+            return cls()
+
+        def synthesize(self, text: str):  # type: ignore[no-untyped-def]
+            yield types.SimpleNamespace(audio_int16_bytes=b"\x01\x00" * 4)
+
+    model_file = tmp_path / "voice.onnx"
+    model_file.write_bytes(b"onnx")
+    out_buf = io.BytesIO()
+    monkeypatch.setattr(pw, "sys", types.SimpleNamespace(
+        argv=["piper_worker", str(model_file)],
+        stdin=io.StringIO("hello\n"),
+        stdout=types.SimpleNamespace(buffer=out_buf),
+        stderr=io.StringIO(),
+    ))
+    monkeypatch.setattr("piper.PiperVoice", FakeVoice)
+
+    assert pw.main() == 0
+    assert loads == 1, "the voice loads exactly once, on the first utterance"
+    # framing intact: rate header + one chunk + terminator
+    assert out_buf.getvalue() == struct.pack("<I", 22050) + struct.pack("<I", 8) + (
+        b"\x01\x00" * 4
+    ) + struct.pack("<I", 0)
+
+
 def test_default_voice_model_bundled_dir_searched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
