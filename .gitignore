@@ -53,3 +53,6 @@ voices/
 # faster-whisper ct2 model fetched at build time by installer/fetch_bundle_inputs.py
 # (M5 Task 7; re-downloadable — the spec bundles it to _internal/models/)
 models/
+
+# release artifacts live on GitHub Releases, not in git
+*.zip
