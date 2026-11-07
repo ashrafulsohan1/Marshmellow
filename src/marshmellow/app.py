@@ -817,7 +817,8 @@ class App:
                 self.mascot.set_state("muted" if muted else "idle")
             logger.info("microphone muted: %s (tray)", muted)
         elif action.kind == "pause":
-            # Tray kill-switch equivalent: cancel every running task now.
+            # Tray kill-switch equivalent (§3.13): abort actions AND TTS now.
             self.manager.cancel_all()
+            self.tts.stop()
             self.tts.say(SpeakRequest(text="All tasks cancelled.", priority="result"))
         logger.info("tray action: %s", action.kind)

@@ -21,7 +21,7 @@ _MENU: tuple[tuple[str, TrayActionKind], ...] = (
     ("Mute", "mute"),
     ("Unmute", "unmute"),
     ("Open Marshmellow", "open_ui"),
-    ("Pause tasks", "pause"),
+    ("Stop tasks", "pause"),
     ("Quit", "quit"),
 )
 

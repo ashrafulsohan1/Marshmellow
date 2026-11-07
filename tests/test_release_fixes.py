@@ -92,6 +92,9 @@ def test_tray_pause_cancels_running_tasks(tmp_path: Path) -> None:
     pack = RecordingPack()
     app = _app(tmp_path, pack, FakeEngine())
     cancelled: list[bool] = []
+    stopped: list[bool] = []
     app.manager.cancel_all = lambda: cancelled.append(True)  # type: ignore[method-assign]
+    app.tts.stop = lambda: stopped.append(True)  # type: ignore[method-assign]
     app._on_tray_action(TrayAction(kind="pause"))
     assert cancelled == [True]
+    assert stopped == [True]  # audit S6: pause kills mid-speech TTS too
