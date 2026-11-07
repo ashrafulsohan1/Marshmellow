@@ -364,9 +364,21 @@ class TaskManager:
         while stopping: manager.stop() cancels the loops on a graceful exit,
         and that path must keep the rows so the tasks come back after restart
         (review repro scenario 2). Foreground one-shots have no row — skipped.
+
+        The drop is EAGER (``exclude`` by id, like the user-cancel path), not
+        state-filtered: every caller runs it BEFORE the terminal state flip so
+        the pinned convention — "terminal ⇒ row already dropped" — holds ON
+        DISK the moment the state is observable. The manager's loops live on
+        the resident thread while callers/tests observe ``handle.state`` from
+        other threads; adjacent statements are atomic per thread, but a
+        cross-thread observer can run between them (pipeline flake: the test
+        saw ``completed``, read the store, and the post-flip persist hadn't
+        landed yet — the stale live-state row survived). Callers keep their
+        post-flip persist too: it re-drops idempotently and heals the tiny
+        drop→flip window against a concurrent register()'s snapshot.
         """
         if spec.mode in _PERSISTED_MODES and not self._stopping:
-            self._persist()
+            self._persist(exclude={spec.id})
 
     def restore(self) -> int:
         """Re-register the tasks a previous run persisted (called once at startup).
@@ -431,8 +443,9 @@ class TaskManager:
         if handle is not None and handle.state == "pending":
             handle.error = repr(exc)
             self._emit(task_id, "failed", f"task could not start: {exc}")
+            self._persist(exclude={task_id})  # row dropped BEFORE the flip (see _persist_terminal)
             handle.state = "failed"
-            self._persist()  # failed → row dropped (terminal states are not persisted)
+            self._persist()  # post-flip re-drop + other live rows stay recorded
 
     def list_tasks(self, state: TaskState | None = None) -> list[TaskHandle]:
         """All registered task handles (registration order); optionally one state only."""
@@ -566,8 +579,9 @@ class TaskManager:
             kill.set()
             logger.info("task %s cancelled", spec.id)
             self._emit(spec.id, "cancelled", spec.instruction)
-            handle.state = "cancelled"
-            self._persist_terminal(spec)  # user cancel → row dropped; graceful stop keeps it
+            self._persist_terminal(spec)  # user cancel → row dropped BEFORE the flip …
+            handle.state = "cancelled"    # … so observers of the state see the store already right
+            self._persist_terminal(spec)  # re-drop: idempotent, heals a concurrent re-write
             raise
         except Exception as exc:
             logger.exception("task %s crashed", spec.id)
@@ -576,8 +590,9 @@ class TaskManager:
             handle.result = result
             handle.error = repr(exc)
             self._emit(spec.id, "failed", result.summary_to_speak)
+            self._persist_terminal(spec)  # failed → row dropped BEFORE the flip (see above)
             handle.state = "failed"
-            self._persist_terminal(spec)  # failed → row dropped (M4 T5 review fix)
+            self._persist_terminal(spec)  # post-flip re-drop (M4 T5 review fix)
             return
         finally:
             if self._lease is not None:
@@ -591,8 +606,9 @@ class TaskManager:
                 self._current_id = None  # no active turn → current_kill() is None again
         handle.result = result
         self._emit(spec.id, "result" if result.ok else "failed", result.summary_to_speak)
+        self._persist_terminal(spec)  # row dropped BEFORE the flip (cross-thread observers)
         handle.state = "completed" if result.ok else "failed"
-        self._persist_terminal(spec)  # completed/failed → row dropped (M4 T5 review fix)
+        self._persist_terminal(spec)  # post-flip re-drop: idempotent, heals a concurrent re-write
 
     def submit_text_background(self, instruction: str) -> asyncio.Task[TaskHandle]:
         """Fire-and-forget submission for the live loop (M2+)."""
@@ -740,6 +756,14 @@ class TaskManager:
                     self._emit(task_id, "waiting", outcome.summary)
                     if errors >= _MAX_CHECK_ERRORS:
                         self._emit(task_id, "failed", outcome.summary)
+                        # Terminal rows drop BEFORE the flip (eager exclude): the
+                        # loops run on the resident thread and other threads
+                        # observe handle.state — the pinned convention
+                        # "terminal ⇒ row already dropped" must hold on disk the
+                        # moment the state is seen (pipeline flake, see
+                        # _persist_terminal). The per-check persist below still
+                        # runs post-flip: idempotent re-drop + concurrent-heal.
+                        self._persist(exclude={task_id})
                         handle.state = "failed"
                         terminal = True
                 else:
@@ -747,6 +771,7 @@ class TaskManager:
                     if baseline is not None and outcome.changed:
                         handle.result = TaskResult(ok=True, summary_to_speak=outcome.summary)
                         self._emit(task_id, "result", outcome.summary)
+                        self._persist(exclude={task_id})  # drop BEFORE the flip (see above)
                         handle.state = "completed"
                         terminal = True
                     else:
