@@ -61,7 +61,16 @@ datas = [
 a_main = Analysis(
     [str(ROOT / "src" / "marshmellow" / "__main__.py")],
     pathex=[str(ROOT / "src")],
-    datas=datas,
+    datas=datas
+    # Package DATA the frozen GUI needs at runtime (PyInstaller collects binaries
+    # but not these files — the same class of gap as piper's espeak-ng-data):
+    # - faster_whisper/assets: the silero-VAD onnx the AudioEngine's VAD loads
+    #   on boot (frozen build crashed in silero_vad() without it).
+    # - openwakeword/resources/models: melspectrogram/embedding feature models
+    #   resolved relative to the package __file__ by the wake watcher (the
+    #   copies in _internal/wake are OURS, not what openwakeword looks for).
+    + collect_data_files("faster_whisper")
+    + collect_data_files("openwakeword", subdir="resources"),
     excludes=["marshmellow.tts.piper_worker", "tkinter"],  # SP7: no piper import in the GUI graph
 )
 pyz_main = PYZ(a_main.pure)
