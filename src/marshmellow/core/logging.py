@@ -3,7 +3,10 @@
 One JSON object per line: {ts, level, name, msg, exc?}. Secrets matching
 `password=…`-style patterns are redacted from the fully formatted line —
 the scrub runs after formatting so neither message arguments nor exception
-text can leak.
+text can leak. URL query credentials (`?key=…`, `&token=…` — monitor targets,
+the M4 handoff) are redacted by a second, URL-shaped pass; the value class
+stops at `&`/quote/whitespace so the non-credential parts of the URL and the
+JSONL structure survive.
 """
 
 from __future__ import annotations
@@ -17,6 +20,14 @@ from pathlib import Path
 _SECRET_RE = re.compile(
     r"(password|passwd|secret|api_key|apikey|token)\s*[=:]\s*(\"[^\"]*\"|\S+)",
     re.IGNORECASE,
+)
+
+# Second pattern, applied after _SECRET_RE inside JsonFormatter.format: URL
+# query params carrying credentials (monitor targets with query keys — the M4
+# handoff; also exception text quoting such URLs). "?key=abc&x=1" →
+# "?key=[REDACTED]&x=1" — the rest of the URL stays diagnosable.
+_URL_SECRET_RE = re.compile(
+    r"[?&#](?:token|key|sig|signature|access_token|api_key|apikey)=([^&\"\s]+)", re.IGNORECASE,
 )
 
 _logger_name = "marshmellow"
@@ -42,6 +53,9 @@ class JsonFormatter(logging.Formatter):
             entry["exc"] = self.formatException(record.exc_info)
         line = json.dumps(entry, ensure_ascii=False)
         line = _SECRET_RE.sub(r"\1=[REDACTED]", line)
+        line = _URL_SECRET_RE.sub(
+            lambda m: m.group(0)[: -len(m.group(1))] + "[REDACTED]", line
+        )
         for secret in _registered_secrets:
             if secret in line:
                 line = line.replace(secret, "[REDACTED]")
