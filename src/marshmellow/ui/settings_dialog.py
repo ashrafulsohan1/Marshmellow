@@ -13,9 +13,11 @@ source of truth, M5 Task 3); toggling it writes through to the Run key.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Final, Literal, cast
 
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -33,6 +35,14 @@ from marshmellow.audio.activation import parse_combo
 from marshmellow.core import autostart, secrets
 from marshmellow.core.config import Settings, product_config_path
 from marshmellow.core.contracts import ActivationMode
+from marshmellow.ui.providers_catalog import (
+    NOT_CONFIGURED_LABEL,
+    PROVIDERS,
+    ProbeResult,
+    probe_provider,
+    provider_by_id,
+    provider_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +59,8 @@ _PRESET_RANK: Final[dict[str, int]] = {"relaxed": 0, "standard": 1, "strict": 2}
 class SettingsDialog(QDialog):
     """The modal settings surface. See the module docstring for the contract."""
 
+    _probe_done = Signal(object)
+
     def __init__(
         self,
         settings: Settings,
@@ -56,6 +68,8 @@ class SettingsDialog(QDialog):
         apply_autostart: Callable[[bool], bool],
         autostart_state: Callable[[], bool] = autostart.is_autostart_enabled,
         store_key: Callable[[str], None] = secrets.store_api_key,
+        load_key: Callable[[], str | None] = secrets.load_api_key,
+        probe_fn: Callable[[str, str, str | None], ProbeResult] = probe_provider,
         on_saved: Callable[[Settings], None] | None = None,
     ) -> None:
         super().__init__()
@@ -63,6 +77,8 @@ class SettingsDialog(QDialog):
         self._apply_autostart = apply_autostart
         self._autostart_state = autostart_state
         self._store_key = store_key
+        self._load_key = load_key
+        self._probe_fn = probe_fn
         self._on_saved = on_saved
 
         self.setWindowTitle("Marshmellow — Settings")
@@ -89,6 +105,32 @@ class SettingsDialog(QDialog):
         self.autostart_check.setChecked(autostart_state())
         form.addRow("Autostart", self.autostart_check)
 
+        # -- provider (D7): catalog-driven cascades — the user never edits a
+        #    config file. Provider → its known base URLs and models; both stay
+        #    editable for anything the catalog doesn't list.
+        self.provider_combo = QComboBox(self)
+        self.provider_combo.setObjectName("settings-provider")
+        self.provider_combo.addItem(NOT_CONFIGURED_LABEL, "")
+        for p in PROVIDERS:
+            self.provider_combo.addItem(p.label, p.id)
+        self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        form.addRow("Provider", self.provider_combo)
+
+        self.base_url_combo = QComboBox(self)
+        self.base_url_combo.setObjectName("settings-base-url")
+        self.base_url_combo.setEditable(True)
+        form.addRow("Base URL", self.base_url_combo)
+
+        self.model_combo = QComboBox(self)
+        self.model_combo.setObjectName("settings-model")
+        self.model_combo.setEditable(True)
+        form.addRow("Model", self.model_combo)
+
+        self.provider_note = QLabel("", self)
+        self.provider_note.setObjectName("settings-provider-note")
+        self.provider_note.setWordWrap(True)
+        form.addRow("About this provider", self.provider_note)
+
         # -- §3.13 preset: persist-only; the Global Constraint (M5 plan) lets the
         #    dialog ESCALATE it, never lower it — items below the persisted preset
         #    are disabled in the popup and Save refuses them again.
@@ -113,11 +155,22 @@ class SettingsDialog(QDialog):
         self.key_edit.setPlaceholderText("leave blank to keep the stored key")
         form.addRow("API key", self.key_edit)
 
+        self.test_button = QPushButton("Test connection", self)
+        self.test_button.setObjectName("settings-test-connection")
+        self.test_button.clicked.connect(self._on_test_connection)
+        form.addRow("Test", self.test_button)
+        self.probe_label = QLabel("", self)
+        self.probe_label.setObjectName("settings-probe-result")
+        self.probe_label.setWordWrap(True)
+        layout.addWidget(self.probe_label)
+        self._probe_done.connect(self._apply_probe_result)  # thread → GUI thread
+
         # live validation error for the hotkey (and any other save-time problem)
         self.error_label = QLabel("", self)
         self.error_label.setObjectName("settings-error")
         layout.addWidget(self.error_label)
         self.hotkey_edit.textChanged.connect(self._on_hotkey_changed)
+        self._select_provider_from_settings()
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -131,6 +184,66 @@ class SettingsDialog(QDialog):
         save_button.clicked.connect(self._on_save)
         buttons.addWidget(save_button)
         layout.addLayout(buttons)
+
+    # -- provider cascade (D7) -------------------------------------------------------
+
+    def _select_provider_from_settings(self) -> None:
+        """Pre-select the dropdowns from the stored config: exact base-URL match
+        wins; kind alone disambiguates only when one catalog entry shares it."""
+        stored = self._settings.providers.llm
+        entry = provider_for(stored.kind, stored.base_url)
+        if entry is not None:
+            self.provider_combo.setCurrentText(entry.label)  # fires the cascade
+            if stored.base_url:
+                self.base_url_combo.setCurrentText(stored.base_url)
+            if stored.model:
+                self.model_combo.setCurrentText(stored.model)
+        # kind == "fake" (or an unrecognized shape) → stay on "not configured"
+
+    def _on_provider_changed(self) -> None:
+        entry = provider_by_id(str(self.provider_combo.currentData() or ""))
+        self.base_url_combo.clear()
+        self.model_combo.clear()
+        if entry is None:  # "not configured" placeholder
+            self.provider_note.clear()
+            self.key_edit.setPlaceholderText("choose a provider first")
+            return
+        for url in entry.base_urls:
+            self.base_url_combo.addItem(url)
+        if entry.base_urls:
+            self.base_url_combo.setCurrentText(entry.base_urls[0])
+        for model in entry.models:
+            self.model_combo.addItem(model)
+        if entry.models:
+            self.model_combo.setCurrentText(entry.models[0])
+        self.provider_note.setText(entry.note)
+        self.key_edit.setPlaceholderText(
+            "no API key needed"
+            if not entry.requires_key
+            else f"paste your {entry.label} API key"
+        )
+
+    def _on_test_connection(self) -> None:
+        base_url = self.base_url_combo.currentText().strip()
+        if not base_url:
+            self.probe_label.setText("choose a provider first")
+            return
+        model = self.model_combo.currentText().strip()
+        key = self.key_edit.text().strip() or (self._load_key() or "")
+        self.probe_label.setText("testing…")
+        self.test_button.setEnabled(False)
+        def _probe_thread() -> None:
+            self._probe_done.emit(self._probe_fn(base_url, model, key))
+
+        threading.Thread(
+            target=_probe_thread,
+            daemon=True,
+            name="provider-probe",
+        ).start()
+
+    def _apply_probe_result(self, result: ProbeResult) -> None:
+        self.test_button.setEnabled(True)
+        self.probe_label.setText(("✅ " if result.ok else "⚠ ") + result.detail)
 
     # -- save ----------------------------------------------------------------------
 
@@ -148,7 +261,31 @@ class SettingsDialog(QDialog):
             self.error_label.setText(message)
             return  # the floor holds: nothing is mutated, saved, or announced
         self._settings.safety.preset = cast(Preset, selected_preset)
+        # Provider (D7): the dropdowns carry kind + endpoint + model — the user
+        # never opens config.toml. An empty provider selection keeps "fake"
+        # (preview mode, spoken at startup).
+        provider_id = str(self.provider_combo.currentData() or "")
         key = self.key_edit.text().strip()
+        if provider_id:
+            entry = provider_by_id(provider_id)
+            if entry is None:  # defensive: currentData is always a catalog id
+                self.error_label.setText("unknown provider — please reselect")
+                return
+            base_url = self.base_url_combo.currentText().strip()
+            model = self.model_combo.currentText().strip() or (
+                entry.models[0] if entry.models else ""
+            )
+            if not base_url:
+                self.error_label.setText("this provider needs a base URL")
+                return
+            if entry.requires_key and not key and not self._load_key():
+                self.error_label.setText(
+                    "this provider needs an API key — paste it in the key field"
+                )
+                return
+            self._settings.providers.llm.kind = cast(Literal["openai_compat", "ollama"], entry.kind)
+            self._settings.providers.llm.base_url = base_url
+            self._settings.providers.llm.model = model
         if key:
             try:
                 self._store_key(key)
