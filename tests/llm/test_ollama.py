@@ -271,7 +271,15 @@ def chat_server() -> Iterator[str]:
         def log_message(self, *args) -> None:
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    class QuietServer(ThreadingHTTPServer):
+        # The provider's pooled connections are closed when the test closes
+        # its resident loops (shutdown-hygiene fix below), so handler threads
+        # mid-readline() see a connection reset — expected teardown noise,
+        # not a server bug; print nothing.
+        def handle_error(self, request, client_address) -> None:
+            pass
+
+    server = QuietServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
@@ -318,7 +326,14 @@ def test_one_provider_instance_cannot_serve_two_resident_loops(chat_server) -> N
         on_vision = asyncio.run_coroutine_threadsafe(one_turn(vision_provider), vision_loop)
         assert on_vision.result(30) == "ok"  # dedicated instance serves the vision loop
     finally:
-        planner_loop.call_soon_threadsafe(planner_loop.stop)
-        vision_loop.call_soon_threadsafe(vision_loop.stop)
-        planner_thread.join(timeout=5)
-        vision_thread.join(timeout=5)
+        # Stop the resident loops AND close them. A stopped-but-unclosed
+        # proactor loop is only close()d from BaseEventLoop.__del__ at some
+        # later GC pass, and on Windows that finalizer can park forever in
+        # IocpProactor._poll waiting for cancelled overlapped ops to report —
+        # the v0.1.2 cleanroom's run 1 of 3 hung >20 min at [100%] exactly
+        # there (docs/plan/CLEANROOM-VERIFY-v012.md §2).
+        for loop, thread in ((planner_loop, planner_thread), (vision_loop, vision_thread)):
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=5)
+            if not loop.is_running():
+                loop.close()
