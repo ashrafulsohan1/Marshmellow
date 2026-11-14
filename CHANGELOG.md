@@ -5,7 +5,10 @@ All notable changes to Marshmellow are documented here. This project adheres to
 record with `git log --oneline`. The full build record lives in
 [`docs/plan/`](docs/plan/) (architecture, milestones, task plans, evidence).
 
-## v0.1.1 — M6 release-feedback round (2026-11-07 → 2026-11-08)
+## v0.1.2 — Provider settings UI + M6 (2026-11-09)
+
+Provider selection, cascading base-URL and model dropdowns, in-app key storage and
+connection test — no config files. All M6 changes below ship in this release.
 
 Post-v0.1.0 daily-use feedback: the four flaws from the feedback brief fixed on
 `main` — no publish and no version bump (bundle rebuild is M6 Task 7; the
