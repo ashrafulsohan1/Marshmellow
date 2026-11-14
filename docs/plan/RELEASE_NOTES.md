@@ -1,4 +1,4 @@
-# Marshmellow v0.1.1 — Release Notes
+# Marshmellow v0.1.2 — Release Notes
 
 **Date:** 2026-11-08 · **Status:** private preview · **Platform:** Windows 10/11
 **Upgrade:** replaces the v0.1.0 bundle — unzip and run; `config.toml` and stored BYOK keys carry
