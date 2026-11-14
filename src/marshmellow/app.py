@@ -290,6 +290,7 @@ class App:
                 bus=self.bus, chunk_tap=self.wake_tap, ingest_gate=self.ingest_gate
             )
         self._quit_requested = False
+        self._fake_provider_notice_given = False
         self.voice = VoiceLoop(self, gate=self.ingest_gate)
         self.bus.subscribe(ActivationDegraded, self._on_activation_degraded)
         self._wire_voice_feedback()
@@ -310,6 +311,24 @@ class App:
         self.manager.start()  # resident loop for background tasks (§3.12, M4)
         self.manager.restore()  # baselines travel with tasks across restart (§3.15, M4 T5)
         logger.info("Marshmellow %s started (headless=%s)", __version__, self.headless)
+        # Live-use feedback (2026-11-14): a fresh install with kind="fake" echoed
+        # instructions back with no explanation. Say it plainly, once, so nobody
+        # has to guess why the agent only repeats what they said.
+        if (
+            not self.headless
+            and self.settings.providers.llm.kind == "fake"
+            and not self._fake_provider_notice_given
+        ):
+            self._fake_provider_notice_given = True
+            self.tts.say(
+                SpeakRequest(
+                    text=(
+                        "Preview mode: I can hear you, but I can't act yet — "
+                        "no language model is configured. See the setup guide."
+                    ),
+                    priority="result",
+                )
+            )
 
     def stop(self) -> None:
         self.voice.stop()
